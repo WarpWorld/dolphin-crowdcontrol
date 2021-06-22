@@ -3,6 +3,7 @@
 // Refer to the license.txt file included.
 
 #include "Core/Core.h"
+#include "Core/State.h"
 
 #include <algorithm>
 #include <atomic>
@@ -176,7 +177,6 @@ __declspec(dllexport) void uncache_jit()
 
 __declspec(dllexport) void DisplayMessageParams(MessageParams* params)
 {
-
   Core::DisplayMessage(std::string(params->message), params->time_in_ms);
 }
 
@@ -192,6 +192,46 @@ __declspec(dllexport) void DisplayMessage(std::string message, int time_in_ms)
   Host_UpdateTitle(message);
   OSD::AddMessage(std::move(message), time_in_ms);
 }
+
+int statenum = 0;
+
+__declspec(dllexport) void LoadCCState()
+{
+  if (!statenum)
+    return;
+
+  std::string state = "CCAuto";
+  state += std::to_string(statenum);
+  state += ".sav";
+
+  ::State::LoadAs(state);
+  statenum--;
+}
+
+__declspec(dllexport) void LoadPrevCCState()
+{
+  statenum++;
+
+  std::string state = "CCAuto";
+  state += std::to_string(statenum);
+  state += ".sav";
+
+  ::State::LoadAs(state);
+}
+
+__declspec(dllexport) void SaveCCState()
+{
+  statenum++;
+
+  std::string state = "CCAuto";
+  state += std::to_string(statenum);
+  state += ".sav";
+
+  ::State::SaveAs(state);
+}
+
+
+
 
 bool IsRunning()
 {

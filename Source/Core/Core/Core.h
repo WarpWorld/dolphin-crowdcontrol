@@ -128,7 +128,8 @@ void SaveScreenShot(std::string_view name);
 __declspec(dllexport) void DisplayMessage(std::string message, int time_in_ms);
 __declspec(dllexport) void DisplayMessageParams(MessageParams* params);
 __declspec(dllexport) void uncache_jit();
-
+__declspec(dllexport) void LoadCCState();
+__declspec(dllexport) void SaveCCState();
 
 void FrameUpdateOnCPUThread();
 void OnFrameEnd();
