@@ -266,7 +266,7 @@ void SetUserDirectory(const std::string& custom_path)
   else if (configPath)  // Case 3
     user_path = TStrToUTF8(configPath.get());
   else if (my_documents_found)  // Case 4
-    user_path = TStrToUTF8(my_documents) + DIR_SEP "Dolphin Emulator" DIR_SEP;
+    user_path = TStrToUTF8(my_documents) + DIR_SEP "Dolphin Emulator (Crowd Control)" DIR_SEP;
   else  // Case 5
     user_path = File::GetExeDirectory() + DIR_SEP USERDATA_DIR DIR_SEP;
 
