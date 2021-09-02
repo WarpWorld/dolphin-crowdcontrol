@@ -231,7 +231,7 @@ void SetUserDirectory(const std::string& custom_path)
   HKEY hkey;
   DWORD local = 0;
   std::unique_ptr<TCHAR[]> configPath;
-  if (RegOpenKeyEx(HKEY_CURRENT_USER, TEXT("Software\\Dolphin Emulator"), 0, KEY_QUERY_VALUE,
+  if (RegOpenKeyEx(HKEY_CURRENT_USER, TEXT("Software\\Dolphin Emulator (Crowd Control)"), 0, KEY_QUERY_VALUE,
                    &hkey) == ERROR_SUCCESS)
   {
     DWORD size = 4;
