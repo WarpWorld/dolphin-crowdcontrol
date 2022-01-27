@@ -27,6 +27,16 @@
 
 #include "InputCommon/ControllerInterface/ControllerInterface.h"
 
+__declspec(dllexport) void InvertControls(bool active)
+{
+  SerialInterface::invertAxes = active;
+}
+
+__declspec(dllexport) void SwapButtons(bool active)
+{
+  SerialInterface::swapButtons = active;
+}
+
 namespace SerialInterface
 {
 // SI Interrupt Types
@@ -221,6 +231,7 @@ static USIComCSR s_com_csr;
 static USIStatusReg s_status_reg;
 static USIEXIClockCount s_exi_clock_count;
 static std::array<u8, 128> s_si_buffer;
+
 
 static void SetNoResponse(u32 channel)
 {

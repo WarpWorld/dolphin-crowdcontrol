@@ -272,7 +272,10 @@ void ControllerInterface::UpdateInput()
   {
     std::lock_guard lk(m_devices_mutex, std::adopt_lock);
     for (const auto& d : m_devices)
+    {
       d->UpdateInput();
+      //d->Inputs()[203]. = true;
+    }
   }
 }
 

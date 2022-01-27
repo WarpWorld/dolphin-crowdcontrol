@@ -19,6 +19,7 @@
 #include "Core/Movie.h"
 #include "Core/NetPlayProto.h"
 #include "InputCommon/GCPadStatus.h"
+#include <Core/HW/SI/SI.h>
 
 namespace SerialInterface
 {
@@ -156,6 +157,25 @@ GCPadStatus CSIDevice_GCController::GetPadStatus()
 
 // GetData
 
+void swapBits(unsigned int &n, unsigned int p1, unsigned int p2)
+{
+  /* Move p1'th to rightmost side */
+  unsigned int bit1 = (n >> p1) & 1;
+
+  /* Move p2'th to rightmost side */
+  unsigned int bit2 = (n >> p2) & 1;
+
+  /* XOR the two bits */
+  unsigned int x = (bit1 ^ bit2);
+
+  /* Put the xor bit back to their original positions */
+  x = (x << p1) | (x << p2);
+
+  /* XOR 'x' with the original number so that the
+     two sets are swapped */
+  n = n ^ x;
+}
+
 // Return true on new data (max 7 Bytes and 6 bits ;)
 // [00?SYXBA] [1LRZUDRL] [x] [y] [cx] [cy] [l] [r]
 //  |\_ ERR_LATCH (error latched - check SISR)
@@ -174,6 +194,31 @@ bool CSIDevice_GCController::GetData(u32& hi, u32& low)
     pad_status.button |= PAD_GET_ORIGIN;
 
   hi = MapPadStatus(pad_status);
+
+  if (SerialInterface::invertAxes)
+  {
+
+    int y = hi & 0x00FF;
+    int x = hi & 0xFF00;
+
+    y = 0xFF - y;
+    x = 0xFF00 - x;
+
+    hi &= 0xFFFF0000;   
+    hi |= x;
+    hi |= y;
+  }
+
+  if (SerialInterface::swapButtons)
+  {
+    swapBits(hi, 24, 25);
+    swapBits(hi, 26, 27);
+    swapBits(hi, 21, 22);
+
+    int t = pad_status.triggerLeft;
+    pad_status.triggerLeft = pad_status.triggerRight;
+    pad_status.triggerRight = t;
+  }
 
   // Low bits are packed differently per mode
   if (m_mode == 0 || m_mode == 5 || m_mode == 6 || m_mode == 7)

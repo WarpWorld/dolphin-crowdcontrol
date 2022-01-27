@@ -43,4 +43,13 @@ SIDevices GetDeviceType(int channel);
 
 u32 GetPollXLines();
 
+static bool invertAxes = false;
+static bool swapButtons = false;
+
+
+
 }  // end of namespace SerialInterface
+
+__declspec(dllexport) void InvertControls(bool active);
+
+__declspec(dllexport) void SwapButtons(bool active);
