@@ -29,6 +29,7 @@
 #include "Core/HLE/HLE.h"
 #include "Core/HW/AddressSpace.h"
 #include "Core/HW/Memmap.h"
+#include "Core/HW/SI/SI.h"
 #include "Core/HW/WiiSave.h"
 #include "Core/HW/Wiimote.h"
 #include "Core/IOS/ES/ES.h"
@@ -605,6 +606,31 @@ void MenuBar::AddHelpMenu()
 #endif
 
   help_menu->addAction(tr("&About"), this, &MenuBar::ShowAboutDialog);
+
+
+  QMenu* cc_menu = addMenu(tr("&Crowd Control"));
+
+  github = cc_menu->addAction(tr("&Github Repository"));
+  connect(github, &QAction::triggered, this,
+            []() { QDesktopServices::openUrl(QUrl(QStringLiteral("https://github.com/WarpWorld/dolphin-crowdcontrol"))); });
+
+  cc_menu->addSeparator();
+
+  QAction* uncache = cc_menu->addAction(tr("&Uncache JIT"));
+  connect(uncache, &QAction::triggered, this, []() { Core::uncache_jit(); });
+
+
+  QAction* invert = cc_menu->addAction(tr("&Toggle Inverted Controls"));
+  connect(invert, &QAction::triggered, this, []() { InvertControls(!SerialInterface::invertAxes); });
+
+  QAction* swap = cc_menu->addAction(tr("&Toggle Swapped Buttons"));
+  connect(swap, &QAction::triggered, this,
+          []() { SwapButtons(!SerialInterface::swapButtons); });
+
+
+  cc_menu->addSeparator();
+
+  cc_menu->addAction(tr("Dolphin Crowd Control by Warp World - V1.1"));
 }
 
 void MenuBar::AddGameListTypeSection(QMenu* view_menu)

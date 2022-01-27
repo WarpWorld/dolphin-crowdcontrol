@@ -43,8 +43,8 @@ SIDevices GetDeviceType(int channel);
 
 u32 GetPollXLines();
 
-static bool invertAxes = false;
-static bool swapButtons = false;
+extern bool invertAxes;
+extern bool swapButtons;
 
 
 

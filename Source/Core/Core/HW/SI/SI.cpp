@@ -27,6 +27,7 @@
 
 #include "InputCommon/ControllerInterface/ControllerInterface.h"
 
+
 __declspec(dllexport) void InvertControls(bool active)
 {
   SerialInterface::invertAxes = active;
@@ -39,7 +40,11 @@ __declspec(dllexport) void SwapButtons(bool active)
 
 namespace SerialInterface
 {
-// SI Interrupt Types
+bool invertAxes = false;
+bool swapButtons = false;
+
+
+  // SI Interrupt Types
 enum SIInterruptType
 {
   INT_RDSTINT = 0,
