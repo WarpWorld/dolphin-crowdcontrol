@@ -28,15 +28,32 @@
 #include "InputCommon/ControllerInterface/ControllerInterface.h"
 
 
-__declspec(dllexport) void InvertControls(bool active)
+struct IntContainer
 {
-  SerialInterface::invertAxes = active;
+  int value;
+};
+
+__declspec(dllexport) void InvertControls(int active)
+{
+  SerialInterface::invertAxes = (active != 0);
 }
 
-__declspec(dllexport) void SwapButtons(bool active)
+__declspec(dllexport) void SwapButtons(int active)
 {
-  SerialInterface::swapButtons = active;
+  SerialInterface::swapButtons = (active != 0);
 }
+
+__declspec(dllexport) void InvertControlsParams(IntContainer * data)
+{
+  InvertControls(data->value);
+}
+
+__declspec(dllexport) void SwapButtonsParams(IntContainer * data)
+{
+  SwapButtons(data->value);
+}
+
+
 
 namespace SerialInterface
 {

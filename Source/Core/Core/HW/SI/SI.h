@@ -50,6 +50,6 @@ extern bool swapButtons;
 
 }  // end of namespace SerialInterface
 
-__declspec(dllexport) void InvertControls(bool active);
+__declspec(dllexport) void InvertControls(int active);
 
-__declspec(dllexport) void SwapButtons(bool active);
+__declspec(dllexport) void SwapButtons(int active);
