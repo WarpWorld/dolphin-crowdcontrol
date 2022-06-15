@@ -67,6 +67,7 @@
 #include "Core/State.h"
 #include "Core/WiiRoot.h"
 
+
 #ifdef USE_GDBSTUB
 #include "Core/PowerPC/GDBStub.h"
 #endif
@@ -230,7 +231,59 @@ __declspec(dllexport) void SaveCCState()
   ::State::SaveAs(state);
 }
 
+__declspec(dllexport) void MemFreeze(unsigned int addr, int value, unsigned int size)
+{
+    for (auto it = begin(cc_patches); it != end(cc_patches); ++it)
+    {
+      if (it->address == addr)
+      {
+        cc_patches.erase(it);
+        break;
+      }
+    }
 
+    std::vector<u8> bytes;
+
+        if (size > 2)
+    {
+      bytes.push_back((unsigned char)(value >> 24));
+      bytes.push_back((unsigned char)(value >> 16));
+    }
+    if (size>1)bytes.push_back((unsigned char)(value>>8));
+    bytes.push_back((unsigned char)(value));
+
+
+
+    Common::Debug::MemoryPatch patch(addr, bytes);
+    cc_patches.push_back(std::move(patch));
+
+    //PowerPC::debug_interface.SetPatch(addr, bytes);
+}
+
+__declspec(dllexport) void MemFreezeParams(FreezeParams * arg)
+{
+  MemFreeze(arg->addr, arg->value, arg->size);
+}
+
+__declspec(dllexport) void MemUnfreeze(uint addr)
+{
+    //PowerPC::debug_interface.UnsetPatch(addr);
+
+    for (auto it = begin(cc_patches); it != end(cc_patches); ++it)
+    {
+      if (it->address == addr)
+      {
+        cc_patches.erase(it);
+        break;
+      }
+    }
+
+}
+
+__declspec(dllexport) void MemUnfreezeParams(UnfreezeParams * arg)
+{
+  MemUnfreeze(arg->addr);
+}
 
 
 bool IsRunning()

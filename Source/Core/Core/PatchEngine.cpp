@@ -19,6 +19,7 @@
 #include "Common/IniFile.h"
 #include "Common/StringUtil.h"
 
+#include "Core/Core.h"
 #include "Core/ActionReplay.h"
 #include "Core/CheatCodes.h"
 #include "Core/Config/MainSettings.h"
@@ -27,6 +28,7 @@
 #include "Core/GeckoCodeConfig.h"
 #include "Core/PowerPC/MMU.h"
 #include "Core/PowerPC/PowerPC.h"
+#include <Common/Align.h>
 
 namespace PatchEngine
 {
@@ -257,6 +259,25 @@ bool ApplyFramePatches()
   // Run the Gecko code handler
   Gecko::RunCodeHandler();
   ActionReplay::RunAllActive();
+
+  for (auto it = Core::cc_patches.begin(); it != Core::cc_patches.end(); it++)
+  {
+    if (!PowerPC::HostIsRAMAddress(it->address))
+      continue;
+
+    for (u32 offset = 0; offset < it->value.size(); ++offset)
+    {
+      PowerPC::HostWrite_U8(it->value[offset], it->address + offset);
+
+      //if (((it->address + offset) % 4) == 3)
+        //PowerPC::ScheduleInvalidateCacheThreadSafe(Common::AlignDown(it->address + offset, 4));
+    }
+    /* if (((it->address + it->value.size()) % 4) != 0)
+    {
+      PowerPC::ScheduleInvalidateCacheThreadSafe(
+          Common::AlignDown(it->address + static_cast<u32>(it->value.size()), 4));
+    }*/
+  }
 
   return true;
 }

@@ -16,6 +16,7 @@
 #include <string_view>
 
 #include "Common/CommonTypes.h"
+#include "Common/Debug/MemoryPatches.h"
 
 struct BootParameters;
 struct WindowSystemInfo;
@@ -26,11 +27,24 @@ struct MessageParams
   int time_in_ms;
 };
 
+struct FreezeParams
+{
+  unsigned int addr;
+  int value;
+  unsigned int size;
+};
+
+struct UnfreezeParams
+{
+  unsigned int addr;
+};
 
 namespace Core
 {
 bool GetIsThrottlerTempDisabled();
 void SetIsThrottlerTempDisabled(bool disable);
+
+std::vector<Common::Debug::MemoryPatch> cc_patches;
 
 // Returns the latest emulation speed (1 is full speed) (swings a lot)
 double GetActualEmulationSpeed();
@@ -130,6 +144,11 @@ __declspec(dllexport) void DisplayMessageParams(MessageParams* params);
 __declspec(dllexport) void uncache_jit();
 __declspec(dllexport) void LoadCCState();
 __declspec(dllexport) void SaveCCState();
+
+__declspec(dllexport) void MemFreeze(unsigned int address, int value, unsigned int size);
+__declspec(dllexport) void MemFreezeParams(FreezeParams* params);
+__declspec(dllexport) void MemUnfreeze(unsigned int address);
+__declspec(dllexport) void MemUnfreezeParams(UnfreezeParams* params);
 
 void FrameUpdateOnCPUThread();
 void OnFrameEnd();

@@ -18,6 +18,8 @@ namespace Config
 {
 using ConfigChangedCallback = std::function<void()>;
 
+std::vector<std::string> utf8_args;
+
 // Layer management
 void AddLayer(std::unique_ptr<ConfigLayerLoader> loader);
 std::shared_ptr<Layer> GetLayer(LayerType layer);

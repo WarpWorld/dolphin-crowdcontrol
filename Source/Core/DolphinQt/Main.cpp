@@ -106,11 +106,11 @@ int main(int argc, char* argv[])
 #else
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow)
 {
-  std::vector<std::string> utf8_args = CommandLineToUtf8Argv(GetCommandLineW());
-  const int utf8_argc = static_cast<int>(utf8_args.size());
-  std::vector<char*> utf8_argv(utf8_args.size());
-  for (size_t i = 0; i < utf8_args.size(); ++i)
-    utf8_argv[i] = utf8_args[i].data();
+  Config::utf8_args = CommandLineToUtf8Argv(GetCommandLineW());
+  const int utf8_argc = static_cast<int>(Config::utf8_args.size());
+  std::vector<char*> utf8_argv(Config::utf8_args.size());
+  for (size_t i = 0; i < Config::utf8_args.size(); ++i)
+    utf8_argv[i] = Config::utf8_args[i].data();
 
   const bool console_attached = AttachConsole(ATTACH_PARENT_PROCESS) != FALSE;
   HANDLE stdout_handle = ::GetStdHandle(STD_OUTPUT_HANDLE);

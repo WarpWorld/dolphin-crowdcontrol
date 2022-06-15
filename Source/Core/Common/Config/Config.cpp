@@ -10,6 +10,7 @@
 #include <shared_mutex>
 
 #include "Common/Config/Config.h"
+#include "Core/Config/MainSettings.h"
 
 namespace Config
 {
@@ -97,6 +98,15 @@ void Load()
     for (auto& layer : s_layers)
       layer.second->Load();
   }
+
+  std::vector<char*> utf8_argv(utf8_args.size());
+  for (size_t i = 0; i < utf8_args.size(); ++i)
+    if (utf8_args[i] == "-mem32")
+    {
+        SetCurrent<bool>(Config::MAIN_RAM_OVERRIDE_ENABLE, true);
+        SetCurrent<unsigned int>(MAIN_MEM1_SIZE, 0x02000000U);
+    }
+
   OnConfigChanged();
 }
 

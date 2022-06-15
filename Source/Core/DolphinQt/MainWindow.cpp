@@ -746,6 +746,10 @@ void MainWindow::Play(const std::optional<std::string>& savestate_path)
   //Core::DisplayMessage("This is a test", 10000);
   
 
+  //Core::MemFreeze(0x803c4c0B, 0x50, 1);//////////////////
+  //Core::MemFreeze(0x803C4C0C, 0x02A6, 2);//////////////////
+                                 
+
   if (Core::GetState() == Core::State::Paused)
   {
     Core::SetState(Core::State::Running);
