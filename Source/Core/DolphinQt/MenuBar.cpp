@@ -630,7 +630,7 @@ void MenuBar::AddHelpMenu()
 
   cc_menu->addSeparator();
 
-  cc_menu->addAction(tr("Dolphin Crowd Control by Warp World - V1.1"));
+  cc_menu->addAction(tr("Dolphin Crowd Control by Warp World - V1.2"));
 }
 
 void MenuBar::AddGameListTypeSection(QMenu* view_menu)
