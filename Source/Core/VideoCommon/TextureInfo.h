@@ -1,6 +1,5 @@
 // Copyright 2021 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #pragma once
 
@@ -18,19 +17,21 @@ class TextureInfo
 {
 public:
   static TextureInfo FromStage(u32 stage);
-  TextureInfo(const u8* ptr, const u8* tlut_ptr, u32 address, TextureFormat texture_format,
-              TLUTFormat tlut_format, u32 width, u32 height, bool from_tmem, const u8* tmem_odd,
-              const u8* tmem_even, std::optional<u32> mip_count);
+  TextureInfo(u32 stage, const u8* ptr, const u8* tlut_ptr, u32 address,
+              TextureFormat texture_format, TLUTFormat tlut_format, u32 width, u32 height,
+              bool from_tmem, const u8* tmem_odd, const u8* tmem_even,
+              std::optional<u32> mip_count);
 
   struct NameDetails
   {
     std::string base_name;
+    std::string texture_name;
     std::string tlut_name;
     std::string format_name;
 
-    std::string GetFullName() const { return base_name + tlut_name + format_name; }
+    std::string GetFullName() const;
   };
-  NameDetails CalculateTextureName();
+  NameDetails CalculateTextureName() const;
 
   const u8* GetData() const;
   const u8* GetTlutAddress() const;
@@ -54,6 +55,8 @@ public:
 
   u32 GetRawWidth() const;
   u32 GetRawHeight() const;
+
+  u32 GetStage() const;
 
   class MipLevel
   {
@@ -115,4 +118,6 @@ private:
   u32 m_block_height;
   u32 m_expanded_height;
   u32 m_raw_height;
+
+  u32 m_stage;
 };

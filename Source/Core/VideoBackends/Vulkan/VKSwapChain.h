@@ -1,6 +1,5 @@
 // Copyright 2016 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #pragma once
 
@@ -35,8 +34,6 @@ public:
   VkSurfaceKHR GetSurface() const { return m_surface; }
   VkSurfaceFormatKHR GetSurfaceFormat() const { return m_surface_format; }
   AbstractTextureFormat GetTextureFormat() const { return m_texture_format; }
-  bool IsVSyncEnabled() const { return m_vsync_enabled; }
-  bool IsStereoEnabled() const { return m_layers == 2; }
   VkSwapchainKHR GetSwapChain() const { return m_swap_chain; }
   u32 GetWidth() const { return m_width; }
   u32 GetHeight() const { return m_height; }
@@ -87,7 +84,7 @@ private:
 
   struct SwapChainImage
   {
-    VkImage image;
+    VkImage image{};
     std::unique_ptr<VKTexture> texture;
     std::unique_ptr<VKFramebuffer> framebuffer;
   };
@@ -95,7 +92,7 @@ private:
   WindowSystemInfo m_wsi;
   VkSurfaceKHR m_surface = VK_NULL_HANDLE;
   VkSurfaceFormatKHR m_surface_format = {};
-  VkPresentModeKHR m_present_mode = VK_PRESENT_MODE_RANGE_SIZE_KHR;
+  VkPresentModeKHR m_present_mode = VK_PRESENT_MODE_IMMEDIATE_KHR;
   AbstractTextureFormat m_texture_format = AbstractTextureFormat::Undefined;
   bool m_vsync_enabled = false;
   bool m_fullscreen_supported = false;

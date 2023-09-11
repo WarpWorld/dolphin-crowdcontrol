@@ -1,6 +1,5 @@
 // Copyright 2015 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "DolphinQt/GameList/GameListModel.h"
 
@@ -9,7 +8,7 @@
 #include <QPixmap>
 #include <QRegularExpression>
 
-#include "Core/ConfigManager.h"
+#include "Core/Config/MainSettings.h"
 
 #include "DiscIO/Enums.h"
 
@@ -63,13 +62,13 @@ QVariant GameListModel::data(const QModelIndex& index, int role) const
   {
   case Column::Platform:
     if (role == Qt::DecorationRole)
-      return Resources::GetPlatform(game.GetPlatform());
+      return Resources::GetPlatform(game.GetPlatform()).pixmap(32, 32);
     if (role == SORT_ROLE)
       return static_cast<int>(game.GetPlatform());
     break;
   case Column::Country:
     if (role == Qt::DecorationRole)
-      return Resources::GetCountry(game.GetCountry());
+      return Resources::GetCountry(game.GetCountry()).pixmap(32, 22);
     if (role == SORT_ROLE)
       return static_cast<int>(game.GetCountry());
     break;
@@ -79,7 +78,7 @@ QVariant GameListModel::data(const QModelIndex& index, int role) const
       // GameCube banners are 96x32, but Wii banners are 192x64.
       QPixmap banner = ToQPixmap(game.GetBannerImage());
       if (banner.isNull())
-        banner = Resources::GetMisc(Resources::MiscID::BannerMissing);
+        banner = Resources::GetMisc(Resources::MiscID::BannerMissing).pixmap(GAMECUBE_BANNER_SIZE);
 
       banner.setDevicePixelRatio(
           std::max(static_cast<qreal>(banner.width()) / GAMECUBE_BANNER_SIZE.width(),
@@ -196,6 +195,8 @@ QVariant GameListModel::data(const QModelIndex& index, int role) const
 
       return tags.join(QStringLiteral(", "));
     }
+  default:
+    break;
   }
 
   return QVariant();
@@ -232,6 +233,8 @@ QVariant GameListModel::headerData(int section, Qt::Orientation orientation, int
     return tr("Compression");
   case Column::Tags:
     return tr("Tags");
+  default:
+    break;
   }
   return QVariant();
 }
@@ -254,23 +257,32 @@ bool GameListModel::ShouldDisplayGameListItem(int index) const
 {
   const UICommon::GameFile& game = *m_games[index];
 
-  if (!m_term.isEmpty() &&
-      !QString::fromStdString(game.GetName(m_title_database)).contains(m_term, Qt::CaseInsensitive))
+  if (!m_term.isEmpty())
   {
-    return false;
+    const bool matches_title = QString::fromStdString(game.GetName(m_title_database))
+                                   .contains(m_term, Qt::CaseInsensitive);
+    const bool filename_visible = Config::Get(Config::MAIN_GAMELIST_COLUMN_FILE_NAME);
+    const bool list_view_selected = Settings::Instance().GetPreferredView();
+    const bool matches_filename =
+        filename_visible && list_view_selected &&
+        QString::fromStdString(game.GetFileName()).contains(m_term, Qt::CaseInsensitive);
+    if (!(matches_title || matches_filename))
+    {
+      return false;
+    }
   }
 
   const bool show_platform = [&game] {
     switch (game.GetPlatform())
     {
     case DiscIO::Platform::GameCubeDisc:
-      return SConfig::GetInstance().m_ListGC;
+      return Config::Get(Config::MAIN_GAMELIST_LIST_GC);
     case DiscIO::Platform::WiiDisc:
-      return SConfig::GetInstance().m_ListWii;
+      return Config::Get(Config::MAIN_GAMELIST_LIST_WII);
     case DiscIO::Platform::WiiWAD:
-      return SConfig::GetInstance().m_ListWad;
+      return Config::Get(Config::MAIN_GAMELIST_LIST_WAD);
     case DiscIO::Platform::ELFOrDOL:
-      return SConfig::GetInstance().m_ListElfDol;
+      return Config::Get(Config::MAIN_GAMELIST_LIST_ELF_DOL);
     default:
       return false;
     }
@@ -282,34 +294,34 @@ bool GameListModel::ShouldDisplayGameListItem(int index) const
   switch (game.GetCountry())
   {
   case DiscIO::Country::Australia:
-    return SConfig::GetInstance().m_ListAustralia;
+    return Config::Get(Config::MAIN_GAMELIST_LIST_AUSTRALIA);
   case DiscIO::Country::Europe:
-    return SConfig::GetInstance().m_ListPal;
+    return Config::Get(Config::MAIN_GAMELIST_LIST_PAL);
   case DiscIO::Country::France:
-    return SConfig::GetInstance().m_ListFrance;
+    return Config::Get(Config::MAIN_GAMELIST_LIST_FRANCE);
   case DiscIO::Country::Germany:
-    return SConfig::GetInstance().m_ListGermany;
+    return Config::Get(Config::MAIN_GAMELIST_LIST_GERMANY);
   case DiscIO::Country::Italy:
-    return SConfig::GetInstance().m_ListItaly;
+    return Config::Get(Config::MAIN_GAMELIST_LIST_ITALY);
   case DiscIO::Country::Japan:
-    return SConfig::GetInstance().m_ListJap;
+    return Config::Get(Config::MAIN_GAMELIST_LIST_JPN);
   case DiscIO::Country::Korea:
-    return SConfig::GetInstance().m_ListKorea;
+    return Config::Get(Config::MAIN_GAMELIST_LIST_KOREA);
   case DiscIO::Country::Netherlands:
-    return SConfig::GetInstance().m_ListNetherlands;
+    return Config::Get(Config::MAIN_GAMELIST_LIST_NETHERLANDS);
   case DiscIO::Country::Russia:
-    return SConfig::GetInstance().m_ListRussia;
+    return Config::Get(Config::MAIN_GAMELIST_LIST_RUSSIA);
   case DiscIO::Country::Spain:
-    return SConfig::GetInstance().m_ListSpain;
+    return Config::Get(Config::MAIN_GAMELIST_LIST_SPAIN);
   case DiscIO::Country::Taiwan:
-    return SConfig::GetInstance().m_ListTaiwan;
+    return Config::Get(Config::MAIN_GAMELIST_LIST_TAIWAN);
   case DiscIO::Country::USA:
-    return SConfig::GetInstance().m_ListUsa;
+    return Config::Get(Config::MAIN_GAMELIST_LIST_USA);
   case DiscIO::Country::World:
-    return SConfig::GetInstance().m_ListWorld;
+    return Config::Get(Config::MAIN_GAMELIST_LIST_WORLD);
   case DiscIO::Country::Unknown:
   default:
-    return SConfig::GetInstance().m_ListUnknown;
+    return Config::Get(Config::MAIN_GAMELIST_LIST_UNKNOWN);
   }
 }
 

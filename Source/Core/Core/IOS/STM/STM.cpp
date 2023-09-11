@@ -1,6 +1,5 @@
 // Copyright 2016 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "Core/IOS/STM/STM.h"
 
@@ -11,6 +10,7 @@
 #include "Common/Logging/Log.h"
 #include "Core/Core.h"
 #include "Core/HW/Memmap.h"
+#include "Core/System.h"
 
 namespace IOS::HLE
 {
@@ -18,6 +18,9 @@ static std::unique_ptr<IOCtlRequest> s_event_hook_request;
 
 std::optional<IPCReply> STMImmediateDevice::IOCtl(const IOCtlRequest& request)
 {
+  auto& system = GetSystem();
+  auto& memory = system.GetMemory();
+
   s32 return_value = IPC_SUCCESS;
   switch (request.request)
   {
@@ -33,8 +36,8 @@ std::optional<IPCReply> STMImmediateDevice::IOCtl(const IOCtlRequest& request)
       return_value = IPC_ENOENT;
       break;
     }
-    Memory::Write_U32(0, s_event_hook_request->buffer_out);
-    m_ios.EnqueueIPCReply(*s_event_hook_request, IPC_SUCCESS);
+    memory.Write_U32(0, s_event_hook_request->buffer_out);
+    GetEmulationKernel().EnqueueIPCReply(*s_event_hook_request, IPC_SUCCESS);
     s_event_hook_request.reset();
     break;
 
@@ -46,7 +49,7 @@ std::optional<IPCReply> STMImmediateDevice::IOCtl(const IOCtlRequest& request)
   case IOCTL_STM_VIDIMMING:  // (Input: 20 bytes, Output: 20 bytes)
     INFO_LOG_FMT(IOS_STM, "{} - IOCtl:", GetDeviceName());
     INFO_LOG_FMT(IOS_STM, "    IOCTL_STM_VIDIMMING");
-    // Memory::Write_U32(1, buffer_out);
+    // memory.Write_U32(1, buffer_out);
     // return_value = 1;
     break;
 
@@ -56,7 +59,7 @@ std::optional<IPCReply> STMImmediateDevice::IOCtl(const IOCtlRequest& request)
     break;
 
   default:
-    request.DumpUnknown(GetDeviceName(), Common::Log::IOS_STM);
+    request.DumpUnknown(GetSystem(), GetDeviceName(), Common::Log::LogType::IOS_STM);
   }
 
   return IPCReply(return_value);
@@ -76,19 +79,23 @@ std::optional<IPCReply> STMEventHookDevice::IOCtl(const IOCtlRequest& request)
     return IPCReply(IPC_EEXIST);
 
   // IOCTL_STM_EVENTHOOK waits until the reset button or power button is pressed.
-  s_event_hook_request = std::make_unique<IOCtlRequest>(request.address);
+  s_event_hook_request = std::make_unique<IOCtlRequest>(GetSystem(), request.address);
   return std::nullopt;
 }
 
 void STMEventHookDevice::DoState(PointerWrap& p)
 {
+  Device::DoState(p);
   u32 address = s_event_hook_request ? s_event_hook_request->address : 0;
   p.Do(address);
   if (address != 0)
-    s_event_hook_request = std::make_unique<IOCtlRequest>(address);
+  {
+    s_event_hook_request = std::make_unique<IOCtlRequest>(GetSystem(), address);
+  }
   else
+  {
     s_event_hook_request.reset();
-  Device::DoState(p);
+  }
 }
 
 bool STMEventHookDevice::HasHookInstalled() const
@@ -102,8 +109,10 @@ void STMEventHookDevice::TriggerEvent(const u32 event) const
   if (!m_is_active || !s_event_hook_request)
     return;
 
-  Memory::Write_U32(event, s_event_hook_request->buffer_out);
-  m_ios.EnqueueIPCReply(*s_event_hook_request, IPC_SUCCESS);
+  auto& system = GetSystem();
+  auto& memory = system.GetMemory();
+  memory.Write_U32(event, s_event_hook_request->buffer_out);
+  GetEmulationKernel().EnqueueIPCReply(*s_event_hook_request, IPC_SUCCESS);
   s_event_hook_request.reset();
 }
 

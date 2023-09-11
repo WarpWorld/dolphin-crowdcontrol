@@ -1,6 +1,5 @@
 // Copyright 2010 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #pragma once
 
@@ -11,6 +10,11 @@
 
 #include "InputCommon/ControllerInterface/ControllerInterface.h"
 #include "InputCommon/DynamicInputTextureManager.h"
+
+namespace Common
+{
+class IniFile;
+}
 
 namespace ControllerEmu
 {
@@ -25,7 +29,14 @@ public:
 
   ~InputConfig();
 
-  bool LoadConfig(bool isGC);
+  enum class InputClass
+  {
+    GC,
+    Wii,
+    GBA,
+  };
+
+  bool LoadConfig(InputClass type);
   void SaveConfig();
 
   template <typename T, typename... Args>
@@ -47,7 +58,7 @@ public:
   void RegisterHotplugCallback();
   void UnregisterHotplugCallback();
 
-  void GenerateControllerTextures(const IniFile& file);
+  void GenerateControllerTextures(const Common::IniFile& file);
 
 private:
   ControllerInterface::HotplugCallbackHandle m_hotplug_callback_handle;

@@ -1,6 +1,5 @@
 // Copyright 2018 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #pragma once
 
@@ -9,11 +8,18 @@
 #include <QTableWidget>
 
 #include "Common/CommonTypes.h"
+#include "Core/Debugger/CodeTrace.h"
 
 class QKeyEvent;
 class QMouseEvent;
 class QResizeEvent;
 class QShowEvent;
+
+namespace Core
+{
+class CPUThreadGuard;
+class System;
+}  // namespace Core
 
 struct CodeViewBranch;
 class BranchDisplayDelegate;
@@ -39,6 +45,7 @@ public:
   // Set tighter row height. Set BP column sizing. This needs to run when font type changes.
   void FontBasedSizing();
   void Update();
+  void Update(const Core::CPUThreadGuard* guard);
 
   void ToggleBreakpoint();
   void AddBreakpoint();
@@ -69,9 +76,12 @@ private:
 
   void OnContextMenu();
 
+  void AutoStep(CodeTrace::AutoStop option = CodeTrace::AutoStop::Always);
   void OnFollowBranch();
   void OnCopyAddress();
+  void OnCopyTargetAddress();
   void OnShowInMemory();
+  void OnShowTargetInMemory();
   void OnCopyFunction();
   void OnCopyCode();
   void OnCopyHex();
@@ -88,6 +98,8 @@ private:
   void OnRestoreInstruction();
 
   void CalculateBranchIndentation();
+
+  Core::System& m_system;
 
   bool m_updating = false;
 

@@ -1,4 +1,4 @@
-// This file is public domain, in case it's useful to anyone. -comex
+// SPDX-License-Identifier: CC0-1.0
 
 #pragma once
 
@@ -6,6 +6,8 @@
 #include <cstddef>
 #include "Common/CommonTypes.h"
 
+namespace Common
+{
 constexpr size_t NETPLAY_CODE_SIZE = 8;
 using TraversalHostId = std::array<char, NETPLAY_CODE_SIZE>;
 using TraversalRequestId = u64;
@@ -69,7 +71,7 @@ struct TraversalPacket
     {
       u8 ok;
       TraversalHostId yourHostId;
-      TraversalInetAddress yourAddress;  // currently unused
+      TraversalInetAddress yourAddress;
     } helloFromServer;
     struct
     {
@@ -92,3 +94,4 @@ struct TraversalPacket
   };
 };
 #pragma pack(pop)
+}  // namespace Common

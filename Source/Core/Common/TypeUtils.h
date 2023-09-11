@@ -1,9 +1,8 @@
-// Copyright 2021 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: CC0-1.0
 
 #pragma once
 
+#include <cstddef>
 #include <type_traits>
 
 namespace Common
@@ -67,4 +66,33 @@ static_assert(std::is_same_v<ObjectType<&Bar::d>, Bar>);
 static_assert(std::is_same_v<ObjectType<&Bar::c>, Foo>);
 static_assert(!std::is_same_v<ObjectType<&Bar::c>, Bar>);
 }  // namespace detail
+
+// Template for checking if Types is count occurrences of T.
+template <typename T, size_t count, typename... Ts>
+struct IsNOf : std::integral_constant<bool, std::conjunction_v<std::is_convertible<Ts, T>...> &&
+                                                sizeof...(Ts) == count>
+{
+};
+
+static_assert(IsNOf<int, 0>::value);
+static_assert(!IsNOf<int, 0, int>::value);
+static_assert(IsNOf<int, 1, int>::value);
+static_assert(!IsNOf<int, 1>::value);
+static_assert(!IsNOf<int, 1, int, int>::value);
+static_assert(IsNOf<int, 2, int, int>::value);
+static_assert(IsNOf<int, 2, int, short>::value);  // Type conversions ARE allowed
+static_assert(!IsNOf<int, 2, int, char*>::value);
+
+// TODO: This can be replaced with std::array's fill() once C++20 is fully supported.
+// Prior to C++20, std::array's fill() function is, unfortunately, not constexpr.
+// Ditto for <algorithm>'s std::fill. Although Dolphin targets C++20, Android doesn't
+// seem to properly support constexpr fill(), so we need this for now.
+template <typename T1, size_t N, typename T2>
+constexpr void Fill(std::array<T1, N>& array, const T2& value)
+{
+  for (auto& entry : array)
+  {
+    entry = value;
+  }
+}
 }  // namespace Common

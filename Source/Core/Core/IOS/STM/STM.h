@@ -1,6 +1,5 @@
 // Copyright 2008 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #pragma once
 
@@ -39,18 +38,18 @@ enum
 };
 
 // The /dev/stm/immediate
-class STMImmediateDevice final : public Device
+class STMImmediateDevice final : public EmulationDevice
 {
 public:
-  using Device::Device;
+  using EmulationDevice::EmulationDevice;
   std::optional<IPCReply> IOCtl(const IOCtlRequest& request) override;
 };
 
 // The /dev/stm/eventhook
-class STMEventHookDevice final : public Device
+class STMEventHookDevice final : public EmulationDevice
 {
 public:
-  using Device::Device;
+  using EmulationDevice::EmulationDevice;
   ~STMEventHookDevice() override;
   std::optional<IPCReply> IOCtl(const IOCtlRequest& request) override;
   void DoState(PointerWrap& p) override;

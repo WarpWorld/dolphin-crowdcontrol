@@ -1,13 +1,11 @@
 // Copyright 2008 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "VideoCommon/VertexLoader.h"
 
 #include "Common/Assert.h"
 #include "Common/CommonTypes.h"
 
-#include "VideoCommon/DataReader.h"
 #include "VideoCommon/VertexLoaderManager.h"
 #include "VideoCommon/VertexLoaderUtils.h"
 #include "VideoCommon/VertexLoader_Color.h"
@@ -17,14 +15,14 @@
 #include "VideoCommon/VideoCommon.h"
 
 // This pointer is used as the source/dst for all fixed function loader calls
-u8* g_video_buffer_read_ptr;
+const u8* g_video_buffer_read_ptr;
 u8* g_vertex_manager_write_ptr;
 
 static void PosMtx_ReadDirect_UByte(VertexLoader* loader)
 {
   u32 posmtx = DataRead<u8>() & 0x3f;
-  if (loader->m_counter < 3)
-    VertexLoaderManager::position_matrix_index[loader->m_counter + 1] = posmtx;
+  if (loader->m_remaining < 3)
+    VertexLoaderManager::position_matrix_index_cache[loader->m_remaining] = posmtx;
   DataWrite<u32>(posmtx);
   PRIM_LOG("posmtx: {}, ", posmtx);
 }
@@ -92,7 +90,7 @@ void VertexLoader::CompileVertexTranslator()
     m_native_vtx_decl.posmtx.components = 4;
     m_native_vtx_decl.posmtx.enable = true;
     m_native_vtx_decl.posmtx.offset = nat_offset;
-    m_native_vtx_decl.posmtx.type = VAR_UNSIGNED_BYTE;
+    m_native_vtx_decl.posmtx.type = ComponentFormat::UByte;
     m_native_vtx_decl.posmtx.integer = true;
     nat_offset += 4;
   }
@@ -111,7 +109,7 @@ void VertexLoader::CompileVertexTranslator()
   m_native_vtx_decl.position.components = pos_elements;
   m_native_vtx_decl.position.enable = true;
   m_native_vtx_decl.position.offset = nat_offset;
-  m_native_vtx_decl.position.type = VAR_FLOAT;
+  m_native_vtx_decl.position.type = ComponentFormat::Float;
   m_native_vtx_decl.position.integer = false;
   nat_offset += pos_elements * sizeof(float);
 
@@ -130,12 +128,12 @@ void VertexLoader::CompileVertexTranslator()
     }
     WriteCall(pFunc);
 
-    for (int i = 0; i < (m_VtxAttr.g0.NormalElements == NormalComponentCount::NBT ? 3 : 1); i++)
+    for (int i = 0; i < (m_VtxAttr.g0.NormalElements == NormalComponentCount::NTB ? 3 : 1); i++)
     {
       m_native_vtx_decl.normals[i].components = 3;
       m_native_vtx_decl.normals[i].enable = true;
       m_native_vtx_decl.normals[i].offset = nat_offset;
-      m_native_vtx_decl.normals[i].type = VAR_FLOAT;
+      m_native_vtx_decl.normals[i].type = ComponentFormat::Float;
       m_native_vtx_decl.normals[i].integer = false;
       nat_offset += 12;
     }
@@ -144,7 +142,7 @@ void VertexLoader::CompileVertexTranslator()
   for (size_t i = 0; i < m_VtxDesc.low.Color.Size(); i++)
   {
     m_native_vtx_decl.colors[i].components = 4;
-    m_native_vtx_decl.colors[i].type = VAR_UNSIGNED_BYTE;
+    m_native_vtx_decl.colors[i].type = ComponentFormat::UByte;
     m_native_vtx_decl.colors[i].integer = false;
 
     TPipelineFunction pFunc =
@@ -167,7 +165,7 @@ void VertexLoader::CompileVertexTranslator()
   for (size_t i = 0; i < m_VtxDesc.high.TexCoord.Size(); i++)
   {
     m_native_vtx_decl.texcoords[i].offset = nat_offset;
-    m_native_vtx_decl.texcoords[i].type = VAR_FLOAT;
+    m_native_vtx_decl.texcoords[i].type = ComponentFormat::Float;
     m_native_vtx_decl.texcoords[i].integer = false;
 
     const auto tc = m_VtxDesc.high.TexCoord[i].Value();
@@ -177,11 +175,11 @@ void VertexLoader::CompileVertexTranslator()
     if (tc != VertexComponentFormat::NotPresent)
     {
       ASSERT_MSG(VIDEO, VertexComponentFormat::Direct <= tc && tc <= VertexComponentFormat::Index16,
-                 "Invalid texture coordinates!\n(tc = %d)", (u32)tc);
+                 "Invalid texture coordinates!\n(tc = {})", tc);
       ASSERT_MSG(VIDEO, ComponentFormat::UByte <= format && format <= ComponentFormat::Float,
-                 "Invalid texture coordinates format!\n(format = %d)", (u32)format);
+                 "Invalid texture coordinates format!\n(format = {})", format);
       ASSERT_MSG(VIDEO, elements == TexComponentCount::S || elements == TexComponentCount::ST,
-                 "Invalid number of texture coordinates elements!\n(elements = %d)", (u32)elements);
+                 "Invalid number of texture coordinates elements!\n(elements = {})", elements);
 
       WriteCall(VertexLoader_TextCoord::GetFunction(tc, format, elements));
     }
@@ -223,7 +221,7 @@ void VertexLoader::CompileVertexTranslator()
           WriteCall(VertexLoader_TextCoord::GetDummyFunction());  // important to get indices right!
           break;
         }
-        else if (m_VtxDesc.low.TexMatIdx[i])
+        else if (m_VtxDesc.low.TexMatIdx[j])
         {
           has_more = true;
         }
@@ -250,15 +248,15 @@ void VertexLoader::WriteCall(TPipelineFunction func)
   m_PipelineStages[m_numPipelineStages++] = func;
 }
 
-int VertexLoader::RunVertices(DataReader src, DataReader dst, int count)
+int VertexLoader::RunVertices(const u8* src, u8* dst, int count)
 {
-  g_vertex_manager_write_ptr = dst.GetPointer();
-  g_video_buffer_read_ptr = src.GetPointer();
+  g_vertex_manager_write_ptr = dst;
+  g_video_buffer_read_ptr = src;
 
   m_numLoadedVertices += count;
   m_skippedVertices = 0;
 
-  for (m_counter = count - 1; m_counter >= 0; m_counter--)
+  for (m_remaining = count - 1; m_remaining >= 0; m_remaining--)
   {
     m_tcIndex = 0;
     m_colIndex = 0;

@@ -1,62 +1,63 @@
 // Copyright 2021 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "VideoCommon/TextureInfo.h"
 
+#include <fmt/format.h>
 #include <xxhash.h>
 
 #include "Common/Align.h"
 #include "Core/HW/Memmap.h"
+#include "Core/System.h"
 #include "VideoCommon/BPMemory.h"
-#include "VideoCommon/SamplerCommon.h"
 #include "VideoCommon/TextureDecoder.h"
 
 TextureInfo TextureInfo::FromStage(u32 stage)
 {
-  const FourTexUnits& tex = bpmem.tex[stage >> 2];
-  const u32 id = stage & 3;
+  const auto tex = bpmem.tex.GetUnit(stage);
 
-  const auto texture_format = tex.texImage0[id].format;
-  const auto tlut_format = tex.texTlut[id].tlut_format;
+  const auto texture_format = tex.texImage0.format;
+  const auto tlut_format = tex.texTlut.tlut_format;
 
-  const auto width = tex.texImage0[id].width + 1;
-  const auto height = tex.texImage0[id].height + 1;
+  const auto width = tex.texImage0.width + 1;
+  const auto height = tex.texImage0.height + 1;
 
-  const u32 address = (tex.texImage3[id].image_base /* & 0x1FFFFF*/) << 5;
+  const u32 address = (tex.texImage3.image_base /* & 0x1FFFFF*/) << 5;
 
-  const u32 tlutaddr = tex.texTlut[id].tmem_offset << 9;
+  const u32 tlutaddr = tex.texTlut.tmem_offset << 9;
   const u8* tlut_ptr = &texMem[tlutaddr];
 
   std::optional<u32> mip_count;
-  const bool has_mipmaps = SamplerCommon::AreBpTexMode0MipmapsEnabled(tex.texMode0[id]);
+  const bool has_mipmaps = tex.texMode0.mipmap_filter != MipMode::None;
   if (has_mipmaps)
   {
-    mip_count = (tex.texMode1[id].max_lod + 0xf) / 0x10;
+    mip_count = (tex.texMode1.max_lod + 0xf) / 0x10;
   }
 
-  const bool from_tmem = tex.texImage1[id].cache_manually_managed != 0;
-  const u32 tmem_address_even = from_tmem ? tex.texImage1[id].tmem_even * TMEM_LINE_SIZE : 0;
-  const u32 tmem_address_odd = from_tmem ? tex.texImage2[id].tmem_odd * TMEM_LINE_SIZE : 0;
+  const bool from_tmem = tex.texImage1.cache_manually_managed != 0;
+  const u32 tmem_address_even = from_tmem ? tex.texImage1.tmem_even * TMEM_LINE_SIZE : 0;
+  const u32 tmem_address_odd = from_tmem ? tex.texImage2.tmem_odd * TMEM_LINE_SIZE : 0;
 
   if (from_tmem)
   {
-    return TextureInfo(&texMem[tmem_address_even], tlut_ptr, address, texture_format, tlut_format,
-                       width, height, true, &texMem[tmem_address_odd], &texMem[tmem_address_even],
-                       mip_count);
+    return TextureInfo(stage, &texMem[tmem_address_even], tlut_ptr, address, texture_format,
+                       tlut_format, width, height, true, &texMem[tmem_address_odd],
+                       &texMem[tmem_address_even], mip_count);
   }
 
-  return TextureInfo(Memory::GetPointer(address), tlut_ptr, address, texture_format, tlut_format,
-                     width, height, false, nullptr, nullptr, mip_count);
+  auto& system = Core::System::GetInstance();
+  auto& memory = system.GetMemory();
+  return TextureInfo(stage, memory.GetPointer(address), tlut_ptr, address, texture_format,
+                     tlut_format, width, height, false, nullptr, nullptr, mip_count);
 }
 
-TextureInfo::TextureInfo(const u8* ptr, const u8* tlut_ptr, u32 address,
+TextureInfo::TextureInfo(u32 stage, const u8* ptr, const u8* tlut_ptr, u32 address,
                          TextureFormat texture_format, TLUTFormat tlut_format, u32 width,
                          u32 height, bool from_tmem, const u8* tmem_odd, const u8* tmem_even,
                          std::optional<u32> mip_count)
     : m_ptr(ptr), m_tlut_ptr(tlut_ptr), m_address(address), m_from_tmem(from_tmem),
       m_tmem_odd(tmem_odd), m_texture_format(texture_format), m_tlut_format(tlut_format),
-      m_raw_width(width), m_raw_height(height)
+      m_raw_width(width), m_raw_height(height), m_stage(stage)
 {
   const bool is_palette_texture = IsColorIndexed(m_texture_format);
   if (is_palette_texture)
@@ -82,10 +83,12 @@ TextureInfo::TextureInfo(const u8* ptr, const u8* tlut_ptr, u32 address,
     // e.g. 64x64 with 7 LODs would have the mipmap chain 64x64,32x32,16x16,8x8,4x4,2x2,1x1,0x0, so
     // we limit the mipmap count to 6 there
     const u32 limited_mip_count =
-        std::min<u32>(IntLog2(std::max(width, height)) + 1, raw_mip_count + 1) - 1;
+        std::min<u32>(MathUtil::IntLog2(std::max(width, height)) + 1, raw_mip_count + 1) - 1;
 
-    // load mips - TODO: Loading mipmaps from tmem is untested!
+    // load mips
     const u8* src_data = m_ptr + GetTextureSize();
+    if (tmem_even)
+      tmem_even += GetTextureSize();
 
     for (u32 i = 0; i < limited_mip_count; i++)
     {
@@ -95,7 +98,12 @@ TextureInfo::TextureInfo(const u8* ptr, const u8* tlut_ptr, u32 address,
   }
 }
 
-TextureInfo::NameDetails TextureInfo::CalculateTextureName()
+std::string TextureInfo::NameDetails::GetFullName() const
+{
+  return fmt::format("{}_{}{}_{}", base_name, texture_name, tlut_name, format_name);
+}
+
+TextureInfo::NameDetails TextureInfo::CalculateTextureName() const
 {
   if (!m_ptr)
     return NameDetails{};
@@ -151,10 +159,11 @@ TextureInfo::NameDetails TextureInfo::CalculateTextureName()
   const u64 tlut_hash = tlut_size ? XXH64(tlut, tlut_size, 0) : 0;
 
   NameDetails result;
-  result.base_name = fmt::format("{}{}x{}{}_{:016x}", format_prefix, m_raw_width, m_raw_height,
-                                 m_mipmaps_enabled ? "_m" : "", tex_hash);
+  result.base_name = fmt::format("{}{}x{}{}", format_prefix, m_raw_width, m_raw_height,
+                                 m_mipmaps_enabled ? "_m" : "");
+  result.texture_name = fmt::format("{:016x}", tex_hash);
   result.tlut_name = tlut_size ? fmt::format("_{:016x}", tlut_hash) : "";
-  result.format_name = fmt::format("_{}", static_cast<int>(m_texture_format));
+  result.format_name = fmt::to_string(static_cast<int>(m_texture_format));
 
   return result;
 }
@@ -234,6 +243,11 @@ u32 TextureInfo::GetRawHeight() const
   return m_raw_height;
 }
 
+u32 TextureInfo::GetStage() const
+{
+  return m_stage;
+}
+
 bool TextureInfo::HasMipMaps() const
 {
   return !m_mip_levels.empty();
@@ -259,8 +273,6 @@ TextureInfo::MipLevel::MipLevel(u32 level, const TextureInfo& parent, bool from_
   m_raw_height = std::max(parent.GetRawHeight() >> level, 1u);
   m_expanded_width = Common::AlignUp(m_raw_width, parent.GetBlockWidth());
   m_expanded_height = Common::AlignUp(m_raw_height, parent.GetBlockHeight());
-
-  // load mips - TODO: Loading mipmaps from tmem is untested!
 
   m_texture_size = TexDecoder_GetTextureSizeInBytes(m_expanded_width, m_expanded_height,
                                                     parent.GetTextureFormat());

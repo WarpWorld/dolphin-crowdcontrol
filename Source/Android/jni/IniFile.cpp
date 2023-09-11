@@ -1,12 +1,13 @@
 // Copyright 2020 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <jni.h>
 
 #include "Common/IniFile.h"
 #include "jni/AndroidCommon/AndroidCommon.h"
 #include "jni/AndroidCommon/IDCache.h"
+
+using Common::IniFile;
 
 static IniFile::Section* GetSectionPointer(JNIEnv* env, jobject obj)
 {

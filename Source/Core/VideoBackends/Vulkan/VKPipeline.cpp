@@ -1,6 +1,5 @@
 // Copyright 2017 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "VideoBackends/Vulkan/VKPipeline.h"
 
@@ -15,11 +14,14 @@
 #include "VideoBackends/Vulkan/VKVertexFormat.h"
 #include "VideoBackends/Vulkan/VulkanContext.h"
 
+#include "VideoCommon/DriverDetails.h"
+
 namespace Vulkan
 {
-VKPipeline::VKPipeline(VkPipeline pipeline, VkPipelineLayout pipeline_layout,
-                       AbstractPipelineUsage usage)
-    : m_pipeline(pipeline), m_pipeline_layout(pipeline_layout), m_usage(usage)
+VKPipeline::VKPipeline(const AbstractPipelineConfig& config, VkPipeline pipeline,
+                       VkPipelineLayout pipeline_layout, AbstractPipelineUsage usage)
+    : AbstractPipeline(config), m_pipeline(pipeline), m_pipeline_layout(pipeline_layout),
+      m_usage(usage)
 {
 }
 
@@ -70,11 +72,11 @@ static VkPipelineMultisampleStateCreateInfo GetVulkanMultisampleState(const Fram
       0,        // VkPipelineMultisampleStateCreateFlags    flags
       static_cast<VkSampleCountFlagBits>(
           state.samples.Value()),  // VkSampleCountFlagBits                    rasterizationSamples
-      state.per_sample_shading,    // VkBool32                                 sampleShadingEnable
-      1.0f,                        // float                                    minSampleShading
-      nullptr,                     // const VkSampleMask*                      pSampleMask;
-      VK_FALSE,                    // VkBool32                                 alphaToCoverageEnable
-      VK_FALSE                     // VkBool32                                 alphaToOneEnable
+      static_cast<bool>(state.per_sample_shading),  // VkBool32 sampleShadingEnable
+      1.0f,      // float                                    minSampleShading
+      nullptr,   // const VkSampleMask*                      pSampleMask;
+      VK_FALSE,  // VkBool32                                 alphaToCoverageEnable
+      VK_FALSE   // VkBool32                                 alphaToOneEnable
   };
 }
 
@@ -131,14 +133,18 @@ static VkPipelineDepthStencilStateCreateInfo GetVulkanDepthStencilState(const De
   };
 }
 
-static VkPipelineColorBlendAttachmentState GetVulkanAttachmentBlendState(const BlendingState& state)
+static VkPipelineColorBlendAttachmentState
+GetVulkanAttachmentBlendState(const BlendingState& state, AbstractPipelineUsage usage)
 {
   VkPipelineColorBlendAttachmentState vk_state = {};
+
+  bool use_dual_source = state.usedualsrc;
+
   vk_state.blendEnable = static_cast<VkBool32>(state.blendenable);
   vk_state.colorBlendOp = state.subtract ? VK_BLEND_OP_REVERSE_SUBTRACT : VK_BLEND_OP_ADD;
   vk_state.alphaBlendOp = state.subtractAlpha ? VK_BLEND_OP_REVERSE_SUBTRACT : VK_BLEND_OP_ADD;
 
-  if (state.usedualsrc && g_ActiveConfig.backend_info.bSupportsDualSourceBlend)
+  if (use_dual_source)
   {
     static constexpr std::array<VkBlendFactor, 8> src_factors = {
         {VK_BLEND_FACTOR_ZERO, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_DST_COLOR,
@@ -237,7 +243,14 @@ std::unique_ptr<VKPipeline> VKPipeline::Create(const AbstractPipelineConfig& con
   VkRenderPass render_pass = g_object_cache->GetRenderPass(
       VKTexture::GetVkFormatForHostTextureFormat(config.framebuffer_state.color_texture_format),
       VKTexture::GetVkFormatForHostTextureFormat(config.framebuffer_state.depth_texture_format),
-      config.framebuffer_state.samples, VK_ATTACHMENT_LOAD_OP_LOAD);
+      config.framebuffer_state.samples, VK_ATTACHMENT_LOAD_OP_LOAD,
+      config.framebuffer_state.additional_color_attachment_count);
+
+  if (render_pass == VK_NULL_HANDLE)
+  {
+    PanicAlertFmt("Failed to get render pass");
+    return nullptr;
+  }
 
   // Get pipeline layout.
   VkPipelineLayout pipeline_layout;
@@ -245,6 +258,9 @@ std::unique_ptr<VKPipeline> VKPipeline::Create(const AbstractPipelineConfig& con
   {
   case AbstractPipelineUsage::GX:
     pipeline_layout = g_object_cache->GetPipelineLayout(PIPELINE_LAYOUT_STANDARD);
+    break;
+  case AbstractPipelineUsage::GXUber:
+    pipeline_layout = g_object_cache->GetPipelineLayout(PIPELINE_LAYOUT_UBER);
     break;
   case AbstractPipelineUsage::Utility:
     pipeline_layout = g_object_cache->GetPipelineLayout(PIPELINE_LAYOUT_UTILITY);
@@ -333,9 +349,19 @@ std::unique_ptr<VKPipeline> VKPipeline::Create(const AbstractPipelineConfig& con
   VkPipelineDepthStencilStateCreateInfo depth_stencil_state =
       GetVulkanDepthStencilState(config.depth_state);
   VkPipelineColorBlendAttachmentState blend_attachment_state =
-      GetVulkanAttachmentBlendState(config.blending_state);
+      GetVulkanAttachmentBlendState(config.blending_state, config.usage);
+
+  std::vector<VkPipelineColorBlendAttachmentState> blend_attachment_states;
+  blend_attachment_states.push_back(blend_attachment_state);
+  // Right now all our attachments have the same state
+  for (u8 i = 0; i < static_cast<u8>(config.framebuffer_state.additional_color_attachment_count);
+       i++)
+  {
+    blend_attachment_states.push_back(blend_attachment_state);
+  }
   VkPipelineColorBlendStateCreateInfo blend_state =
-      GetVulkanColorBlendState(config.blending_state, &blend_attachment_state, 1);
+      GetVulkanColorBlendState(config.blending_state, blend_attachment_states.data(),
+                               static_cast<uint32_t>(blend_attachment_states.size()));
 
   // This viewport isn't used, but needs to be specified anyway.
   static const VkViewport viewport = {0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 1.0f};
@@ -395,6 +421,6 @@ std::unique_ptr<VKPipeline> VKPipeline::Create(const AbstractPipelineConfig& con
     return VK_NULL_HANDLE;
   }
 
-  return std::make_unique<VKPipeline>(pipeline, pipeline_layout, config.usage);
+  return std::make_unique<VKPipeline>(config, pipeline, pipeline_layout, config.usage);
 }
 }  // namespace Vulkan

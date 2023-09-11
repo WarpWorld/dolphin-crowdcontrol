@@ -1,6 +1,5 @@
 // Copyright 2021 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <functional>
 
@@ -10,6 +9,7 @@
 #include "Common/FPURoundMode.h"
 #include "Core/PowerPC/Interpreter/Interpreter_FPUtils.h"
 #include "Core/PowerPC/JitArm64/Jit.h"
+#include "Core/System.h"
 
 #include "../TestValues.h"
 
@@ -31,10 +31,12 @@ struct Pair
 class TestConversion : private JitArm64
 {
 public:
-  TestConversion()
+  explicit TestConversion(Core::System& system) : JitArm64(system)
   {
+    const Common::ScopedJITPageWriteAndNoExecute enable_jit_page_writes;
+
     AllocCodeSpace(4096);
-    AddChildCodeSpace(&farcode, 2048);
+    AddChildCodeSpace(&m_far_code, 2048);
 
     gpr.Init(this);
     fpr.Init(this);
@@ -83,12 +85,12 @@ public:
 
     // Set the rounding mode to something that's as annoying as possible to handle
     // (flush-to-zero enabled, and rounding not symmetric about the origin)
-    FPURoundMode::SetSIMDMode(FPURoundMode::RoundMode::ROUND_UP, true);
+    Common::FPU::SetSIMDMode(Common::FPU::RoundMode::ROUND_UP, true);
   }
 
   ~TestConversion() override
   {
-    FPURoundMode::LoadDefaultSIMDState();
+    Common::FPU::LoadDefaultSIMDState();
 
     FreeCodeSpace();
   }
@@ -118,7 +120,7 @@ private:
 
 TEST(JitArm64, ConvertDoubleToSingle)
 {
-  TestConversion test;
+  TestConversion test(Core::System::GetInstance());
 
   for (const u64 input : double_test_values)
   {
@@ -153,7 +155,7 @@ TEST(JitArm64, ConvertDoubleToSingle)
 
 TEST(JitArm64, ConvertSingleToDouble)
 {
-  TestConversion test;
+  TestConversion test(Core::System::GetInstance());
 
   for (const u32 input : single_test_values)
   {

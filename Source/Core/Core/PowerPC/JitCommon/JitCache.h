@@ -1,6 +1,5 @@
 // Copyright 2008 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #pragma once
 
@@ -17,6 +16,7 @@
 #include <vector>
 
 #include "Common/CommonTypes.h"
+#include "Core/HW/Memmap.h"
 
 class JitBase;
 
@@ -100,18 +100,6 @@ typedef void (*CompiledCode)();
 class ValidBlockBitSet final
 {
 public:
-  ValidBlockBitSet()
-  {
-    m_valid_block.reset(new u32[VALID_BLOCK_ALLOC_ELEMENTS]);
-    ClearAll();
-  }
-
-  void Set(u32 bit) { m_valid_block[bit / 32] |= 1u << (bit % 32); }
-  void Clear(u32 bit) { m_valid_block[bit / 32] &= ~(1u << (bit % 32)); }
-  void ClearAll() { memset(m_valid_block.get(), 0, sizeof(u32) * VALID_BLOCK_ALLOC_ELEMENTS); }
-  bool Test(u32 bit) { return (m_valid_block[bit / 32] & (1u << (bit % 32))) != 0; }
-
-private:
   enum
   {
     // ValidBlockBitSet covers the whole 32-bit address-space in 32-byte
@@ -122,7 +110,19 @@ private:
     // The number of elements in the allocated array. Each u32 contains 32 bits.
     VALID_BLOCK_ALLOC_ELEMENTS = VALID_BLOCK_MASK_SIZE / 32
   };
+  // Directly accessed by Jit64.
   std::unique_ptr<u32[]> m_valid_block;
+
+  ValidBlockBitSet()
+  {
+    m_valid_block.reset(new u32[VALID_BLOCK_ALLOC_ELEMENTS]);
+    ClearAll();
+  }
+
+  void Set(u32 bit) { m_valid_block[bit / 32] |= 1u << (bit % 32); }
+  void Clear(u32 bit) { m_valid_block[bit / 32] &= ~(1u << (bit % 32)); }
+  void ClearAll() { memset(m_valid_block.get(), 0, sizeof(u32) * VALID_BLOCK_ALLOC_ELEMENTS); }
+  bool Test(u32 bit) const { return (m_valid_block[bit / 32] & (1u << (bit % 32))) != 0; }
 };
 
 class JitBaseBlockCache
@@ -132,8 +132,11 @@ public:
   // is valid (MSR.IR and MSR.DR, the address translation bits).
   static constexpr u32 JIT_CACHE_MSR_MASK = 0x30;
 
-  static constexpr u32 FAST_BLOCK_MAP_ELEMENTS = 0x10000;
-  static constexpr u32 FAST_BLOCK_MAP_MASK = FAST_BLOCK_MAP_ELEMENTS - 1;
+  // The value for the map is determined like this:
+  // ((4 GB guest memory space) / (4 bytes per address)) * sizeof(JitBlock*)
+  static constexpr u64 FAST_BLOCK_MAP_SIZE = 0x2'0000'0000;
+  static constexpr u32 FAST_BLOCK_MAP_FALLBACK_ELEMENTS = 0x10000;
+  static constexpr u32 FAST_BLOCK_MAP_FALLBACK_MASK = FAST_BLOCK_MAP_FALLBACK_ELEMENTS - 1;
 
   explicit JitBaseBlockCache(JitBase& jit);
   virtual ~JitBaseBlockCache();
@@ -145,6 +148,7 @@ public:
 
   // Code Cache
   JitBlock** GetFastBlockMap();
+  JitBlock** GetFastBlockMapFallback();
   void RunOnBlocks(std::function<void(const JitBlock&)> f);
 
   JitBlock* AllocateBlock(u32 em_address);
@@ -162,7 +166,10 @@ public:
   const u8* Dispatch();
 
   void InvalidateICache(u32 address, u32 length, bool forced);
+  void InvalidateICacheLine(u32 address);
   void ErasePhysicalRange(u32 address, u32 length);
+
+  u32* GetBlockBitSet() const;
 
 protected:
   virtual void DestroyBlock(JitBlock& block);
@@ -176,6 +183,7 @@ private:
   void LinkBlockExits(JitBlock& block);
   void LinkBlock(JitBlock& block);
   void UnlinkBlock(const JitBlock& block);
+  void InvalidateICacheInternal(u32 physical_address, u32 address, u32 length, bool forced);
 
   JitBlock* MoveBlockIntoFastCache(u32 em_address, u32 msr);
 
@@ -200,7 +208,16 @@ private:
   // It is used to provide a fast way to query if no icache invalidation is needed.
   ValidBlockBitSet valid_block;
 
-  // This array is indexed with the masked PC and likely holds the correct block id.
+  // This array is indexed with the shifted PC and likely holds the correct block id.
   // This is used as a fast cache of block_map used in the assembly dispatcher.
-  std::array<JitBlock*, FAST_BLOCK_MAP_ELEMENTS> fast_block_map;  // start_addr & mask -> number
+  // It is implemented via a shm segment using m_block_map_arena.
+  JitBlock** m_fast_block_map = 0;
+  Common::MemArena m_block_map_arena;
+
+  // An alternative for the above fast_block_map but without a shm segment
+  // in case the shm memory region couldn't be allocated.
+  std::array<JitBlock*, FAST_BLOCK_MAP_FALLBACK_ELEMENTS>
+      m_fast_block_map_fallback{};  // start_addr & mask -> number
+
+  JitBlock** m_fast_block_map_ptr = 0;
 };

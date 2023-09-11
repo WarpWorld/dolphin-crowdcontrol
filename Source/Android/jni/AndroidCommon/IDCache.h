@@ -1,6 +1,5 @@
 // Copyright 2018 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #pragma once
 
@@ -14,7 +13,6 @@ jclass GetStringClass();
 
 jclass GetNativeLibraryClass();
 jmethodID GetDisplayAlertMsg();
-jmethodID GetDoRumble();
 jmethodID GetUpdateTouchPointer();
 jmethodID GetOnTitleChanged();
 jmethodID GetFinishEmulationActivity();
@@ -33,6 +31,10 @@ jfieldID GetGameFileCachePointer();
 jclass GetLinkedHashMapClass();
 jmethodID GetLinkedHashMapInit();
 jmethodID GetLinkedHashMapPut();
+
+jclass GetHashMapClass();
+jmethodID GetHashMapInit();
+jmethodID GetHashMapPut();
 
 jclass GetIniFileClass();
 jfieldID GetIniFilePointer();
@@ -57,5 +59,59 @@ jmethodID GetNetworkHelperGetNetworkPrefixLength();
 jmethodID GetNetworkHelperGetNetworkGateway();
 
 jmethodID GetBooleanSupplierGet();
+
+jclass GetARCheatClass();
+jfieldID GetARCheatPointer();
+jmethodID GetARCheatConstructor();
+
+jclass GetGeckoCheatClass();
+jfieldID GetGeckoCheatPointer();
+jmethodID GetGeckoCheatConstructor();
+
+jclass GetPatchCheatClass();
+jfieldID GetPatchCheatPointer();
+jmethodID GetPatchCheatConstructor();
+
+jclass GetGraphicsModGroupClass();
+jfieldID GetGraphicsModGroupPointer();
+jmethodID GetGraphicsModGroupConstructor();
+
+jclass GetGraphicsModClass();
+jfieldID GetGraphicsModPointer();
+jmethodID GetGraphicsModConstructor();
+
+jclass GetRiivolutionPatchesClass();
+jfieldID GetRiivolutionPatchesPointer();
+
+jclass GetWiiUpdateCallbackClass();
+jmethodID GetWiiUpdateCallbackFunction();
+
+jclass GetControlClass();
+jfieldID GetControlPointer();
+jmethodID GetControlConstructor();
+
+jclass GetControlGroupClass();
+jfieldID GetControlGroupPointer();
+jmethodID GetControlGroupConstructor();
+
+jclass GetControlReferenceClass();
+jfieldID GetControlReferencePointer();
+jmethodID GetControlReferenceConstructor();
+
+jclass GetEmulatedControllerClass();
+jfieldID GetEmulatedControllerPointer();
+jmethodID GetEmulatedControllerConstructor();
+
+jclass GetNumericSettingClass();
+jfieldID GetNumericSettingPointer();
+jmethodID GetNumericSettingConstructor();
+
+jclass GetCoreDeviceClass();
+jfieldID GetCoreDevicePointer();
+jmethodID GetCoreDeviceConstructor();
+
+jclass GetCoreDeviceControlClass();
+jfieldID GetCoreDeviceControlPointer();
+jmethodID GetCoreDeviceControlConstructor();
 
 }  // namespace IDCache

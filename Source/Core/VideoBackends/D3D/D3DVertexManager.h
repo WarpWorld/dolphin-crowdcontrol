@@ -1,6 +1,5 @@
 // Copyright 2008 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #pragma once
 
@@ -13,6 +12,8 @@
 #include "VideoCommon/NativeVertexFormat.h"
 #include "VideoCommon/VertexManagerBase.h"
 
+enum class ShaderAttrib : u32;
+
 namespace DX11
 {
 class D3DVertexFormat : public NativeVertexFormat
@@ -23,6 +24,8 @@ public:
   ID3D11InputLayout* GetInputLayout(const void* vs_bytecode, size_t vs_bytecode_size);
 
 private:
+  void AddAttribute(const AttributeFormat& format, ShaderAttrib semantic_index);
+
   std::array<D3D11_INPUT_ELEMENT_DESC, 32> m_elems{};
   UINT m_num_elems = 0;
 

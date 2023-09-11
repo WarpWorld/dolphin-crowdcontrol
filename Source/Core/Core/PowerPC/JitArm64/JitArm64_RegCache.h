@@ -1,6 +1,5 @@
 // Copyright 2014 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #pragma once
 
@@ -157,8 +156,10 @@ public:
   virtual void Start(PPCAnalyst::BlockRegStats& stats) {}
   void DiscardRegisters(BitSet32 regs);
   void ResetRegisters(BitSet32 regs);
-  // Flushes the register cache in different ways depending on the mode
-  virtual void Flush(FlushMode mode, PPCAnalyst::CodeOp* op) = 0;
+  // Flushes the register cache in different ways depending on the mode.
+  // A temporary register must be supplied when flushing GPRs with FlushMode::MaintainState,
+  // but in other cases it can be set to ARM64Reg::INVALID_REG when convenient for the caller.
+  virtual void Flush(FlushMode mode, Arm64Gen::ARM64Reg tmp_reg) = 0;
 
   virtual BitSet32 GetCallerSavedUsed() const = 0;
 
@@ -209,10 +210,11 @@ protected:
   void UnlockRegister(Arm64Gen::ARM64Reg host_reg);
 
   // Flushes a guest register by host provided
-  virtual void FlushByHost(Arm64Gen::ARM64Reg host_reg) = 0;
+  virtual void FlushByHost(Arm64Gen::ARM64Reg host_reg,
+                           Arm64Gen::ARM64Reg tmp_reg = Arm64Gen::ARM64Reg::INVALID_REG) = 0;
 
   void DiscardRegister(size_t preg);
-  virtual void FlushRegister(size_t preg, bool maintain_state) = 0;
+  virtual void FlushRegister(size_t preg, bool maintain_state, Arm64Gen::ARM64Reg tmp_reg) = 0;
 
   void IncrementAllUsed()
   {
@@ -247,40 +249,91 @@ public:
 
   void Start(PPCAnalyst::BlockRegStats& stats) override;
 
-  // Flushes the register cache in different ways depending on the mode
-  void Flush(FlushMode mode, PPCAnalyst::CodeOp* op = nullptr) override;
+  // Flushes the register cache in different ways depending on the mode.
+  // A temporary register must be supplied when flushing GPRs with FlushMode::MaintainState,
+  // but in other cases it can be set to ARM64Reg::INVALID_REG when convenient for the caller.
+  void Flush(FlushMode mode, Arm64Gen::ARM64Reg tmp_reg) override;
 
-  // Returns a guest GPR inside of a host register
-  // Will dump an immediate to the host register as well
+  // Returns a guest GPR inside of a host register.
+  // Will dump an immediate to the host register as well.
   Arm64Gen::ARM64Reg R(size_t preg) { return R(GetGuestGPR(preg)); }
-  // Returns a guest CR inside of a host register
+
+  // Returns a guest CR inside of a host register.
   Arm64Gen::ARM64Reg CR(size_t preg) { return R(GetGuestCR(preg)); }
-  // Set a register to an immediate, only valid for guest GPRs
-  void SetImmediate(size_t preg, u32 imm) { SetImmediate(GetGuestGPR(preg), imm); }
-  // Returns if a register is set as an immediate, only valid for guest GPRs
+
+  // Set a register to an immediate. Only valid for guest GPRs.
+  void SetImmediate(size_t preg, u32 imm, bool dirty = true)
+  {
+    SetImmediate(GetGuestGPR(preg), imm, dirty);
+  }
+
+  // Returns if a register is set as an immediate. Only valid for guest GPRs.
   bool IsImm(size_t preg) const { return GetGuestGPROpArg(preg).GetType() == RegType::Immediate; }
-  // Gets the immediate that a register is set to, only valid for guest GPRs
+
+  // Gets the immediate that a register is set to. Only valid for guest GPRs.
   u32 GetImm(size_t preg) const { return GetGuestGPROpArg(preg).GetImm(); }
-  // Binds a guest GPR to a host register, optionally loading its value
-  void BindToRegister(size_t preg, bool do_load) { BindToRegister(GetGuestGPR(preg), do_load); }
-  // Binds a guest CR to a host register, optionally loading its value
-  void BindCRToRegister(size_t preg, bool do_load) { BindToRegister(GetGuestCR(preg), do_load); }
+
+  // Binds a guest GPR to a host register, optionally loading its value.
+  //
+  // preg: The guest register index.
+  // will_read: Whether the caller intends to read from the register.
+  // will_write: Whether the caller intends to write to the register.
+  //
+  // Normally, you should call this function if you intend to write to a register, and shouldn't
+  // call this function if you don't intend to write to a register. There is however one situation
+  // where calling this function with will_write = false is a useful trick: When emulating a memory
+  // load that might have to be rolled back.
+  //
+  // By calling this function with will_write = false before performing the load, this function
+  // guarantees that the guest register will be marked as dirty (needing to be written back to
+  // ppcState) only if the guest register previously contained a value that needs to be written back
+  // to ppcState. This trick prevents the following problem that otherwise would happen:
+  //
+  // 1. The caller calls this function with will_read = false and will_write = true.
+  // 2. The guest register didn't have a host register allocated, so this function allocates one.
+  // 3. This function does *not* write anything to the host register, since will_read was false.
+  // 4. The caller emits code for the load.
+  // 5. The caller calls Flush (to emit code for jumping to an exception handler).
+  // 6. Flush writes the value in the host register to ppcState, even though it was a stale value.
+  //
+  // By calling this function with will_write = false before the Flush call, no stale values will be
+  // flushed. Just remember to call this function again with will_write = true after the Flush call.
+  void BindToRegister(size_t preg, bool will_read, bool will_write = true)
+  {
+    BindToRegister(GetGuestGPR(preg), will_read, will_write);
+  }
+
+  // Binds a guest CR to a host register, optionally loading its value.
+  // The description of BindToRegister above applies to this function as well.
+  void BindCRToRegister(size_t preg, bool will_read, bool will_write = true)
+  {
+    BindToRegister(GetGuestCR(preg), will_read, will_write);
+  }
+
   BitSet32 GetCallerSavedUsed() const override;
 
-  void StoreRegisters(BitSet32 regs) { FlushRegisters(regs, false); }
-  void StoreCRRegisters(BitSet32 regs) { FlushCRRegisters(regs, false); }
+  void StoreRegisters(BitSet32 regs, Arm64Gen::ARM64Reg tmp_reg = Arm64Gen::ARM64Reg::INVALID_REG)
+  {
+    FlushRegisters(regs, false, tmp_reg);
+  }
+
+  void StoreCRRegisters(BitSet32 regs, Arm64Gen::ARM64Reg tmp_reg = Arm64Gen::ARM64Reg::INVALID_REG)
+  {
+    FlushCRRegisters(regs, false, tmp_reg);
+  }
 
 protected:
   // Get the order of the host registers
   void GetAllocationOrder() override;
 
   // Flushes a guest register by host provided
-  void FlushByHost(Arm64Gen::ARM64Reg host_reg) override;
+  void FlushByHost(Arm64Gen::ARM64Reg host_reg,
+                   Arm64Gen::ARM64Reg tmp_reg = Arm64Gen::ARM64Reg::INVALID_REG) override;
 
-  void FlushRegister(size_t index, bool maintain_state) override;
+  void FlushRegister(size_t index, bool maintain_state, Arm64Gen::ARM64Reg tmp_reg) override;
 
 private:
-  bool IsCalleeSaved(Arm64Gen::ARM64Reg reg) const;
+  bool IsCallerSaved(Arm64Gen::ARM64Reg reg) const;
 
   struct GuestRegInfo
   {
@@ -295,11 +348,11 @@ private:
   GuestRegInfo GetGuestByIndex(size_t index);
 
   Arm64Gen::ARM64Reg R(const GuestRegInfo& guest_reg);
-  void SetImmediate(const GuestRegInfo& guest_reg, u32 imm);
-  void BindToRegister(const GuestRegInfo& guest_reg, bool do_load);
+  void SetImmediate(const GuestRegInfo& guest_reg, u32 imm, bool dirty);
+  void BindToRegister(const GuestRegInfo& guest_reg, bool will_read, bool will_write = true);
 
-  void FlushRegisters(BitSet32 regs, bool maintain_state);
-  void FlushCRRegisters(BitSet32 regs, bool maintain_state);
+  void FlushRegisters(BitSet32 regs, bool maintain_state, Arm64Gen::ARM64Reg tmp_reg);
+  void FlushCRRegisters(BitSet32 regs, bool maintain_state, Arm64Gen::ARM64Reg tmp_reg);
 };
 
 class Arm64FPRCache : public Arm64RegCache
@@ -307,14 +360,15 @@ class Arm64FPRCache : public Arm64RegCache
 public:
   Arm64FPRCache();
 
-  // Flushes the register cache in different ways depending on the mode
-  void Flush(FlushMode mode, PPCAnalyst::CodeOp* op = nullptr) override;
+  // Flushes the register cache in different ways depending on the mode.
+  // The temporary register can be set to ARM64Reg::INVALID_REG when convenient for the caller.
+  void Flush(FlushMode mode, Arm64Gen::ARM64Reg tmp_reg) override;
 
   // Returns a guest register inside of a host register
   // Will dump an immediate to the host register as well
   Arm64Gen::ARM64Reg R(size_t preg, RegType type);
 
-  Arm64Gen::ARM64Reg RW(size_t preg, RegType type);
+  Arm64Gen::ARM64Reg RW(size_t preg, RegType type, bool set_dirty = true);
 
   BitSet32 GetCallerSavedUsed() const override;
 
@@ -322,19 +376,24 @@ public:
 
   void FixSinglePrecision(size_t preg);
 
-  void StoreRegisters(BitSet32 regs) { FlushRegisters(regs, false); }
+  void StoreRegisters(BitSet32 regs, Arm64Gen::ARM64Reg tmp_reg = Arm64Gen::ARM64Reg::INVALID_REG)
+  {
+    FlushRegisters(regs, false, tmp_reg);
+  }
 
 protected:
   // Get the order of the host registers
   void GetAllocationOrder() override;
 
   // Flushes a guest register by host provided
-  void FlushByHost(Arm64Gen::ARM64Reg host_reg) override;
+  void FlushByHost(Arm64Gen::ARM64Reg host_reg,
+                   Arm64Gen::ARM64Reg tmp_reg = Arm64Gen::ARM64Reg::INVALID_REG) override;
 
-  void FlushRegister(size_t preg, bool maintain_state) override;
+  void FlushRegister(size_t preg, bool maintain_state, Arm64Gen::ARM64Reg tmp_reg) override;
 
 private:
-  bool IsCalleeSaved(Arm64Gen::ARM64Reg reg) const;
+  bool IsCallerSaved(Arm64Gen::ARM64Reg reg) const;
+  bool IsTopHalfUsed(Arm64Gen::ARM64Reg reg) const;
 
-  void FlushRegisters(BitSet32 regs, bool maintain_state);
+  void FlushRegisters(BitSet32 regs, bool maintain_state, Arm64Gen::ARM64Reg tmp_reg);
 };

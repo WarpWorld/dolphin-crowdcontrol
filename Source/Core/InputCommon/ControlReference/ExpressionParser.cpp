@@ -1,6 +1,5 @@
 // Copyright 2013 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "InputCommon/ControlReference/ExpressionParser.h"
 
@@ -38,6 +37,7 @@ public:
     void operator()(T* func)
     {
       (*func)();
+      delete func;
     }
   };
 
@@ -102,10 +102,10 @@ std::string Lexer::FetchDelimString(char delim)
 
 std::string Lexer::FetchWordChars()
 {
-  // Valid word characters:
-  std::regex rx(R"([a-z\d_])", std::regex_constants::icase);
-
-  return FetchCharsWhile([&rx](char c) { return std::regex_match(std::string(1, c), rx); });
+  return FetchCharsWhile([](char c) {
+    return std::isalpha(c, std::locale::classic()) || std::isdigit(c, std::locale::classic()) ||
+           c == '_';
+  });
 }
 
 Token Lexer::GetDelimitedLiteral()
@@ -134,7 +134,8 @@ Token Lexer::GetRealLiteral(char first_char)
   value += first_char;
   value += FetchCharsWhile([](char c) { return isdigit(c, std::locale::classic()) || ('.' == c); });
 
-  if (std::regex_match(value, std::regex(R"(\d+(\.\d+)?)")))
+  static const std::regex re(R"(\d+(\.\d+)?)");
+  if (std::regex_match(value, re))
     return Token(TOK_LITERAL, value);
 
   return Token(TOK_INVALID);
@@ -981,7 +982,7 @@ static std::unique_ptr<Expression> ParseBarewordExpression(const std::string& st
 
 ParseResult ParseExpression(const std::string& str)
 {
-  if (StripSpaces(str).empty())
+  if (StripWhitespace(str).empty())
     return ParseResult::MakeEmptyResult();
 
   auto bareword_expr = ParseBarewordExpression(str);

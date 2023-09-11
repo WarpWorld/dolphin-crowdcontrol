@@ -1,6 +1,5 @@
 // Copyright 2008 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 // Core
 
@@ -27,6 +26,7 @@ struct MessageParams
   int time_in_ms;
 };
 
+#pragma region CC_Changes
 struct FreezeParams
 {
   unsigned int addr;
@@ -38,19 +38,24 @@ struct UnfreezeParams
 {
   unsigned int addr;
 };
+#pragma endregion CC_Changes
 
 namespace Core
 {
+class System;
+
 bool GetIsThrottlerTempDisabled();
 void SetIsThrottlerTempDisabled(bool disable);
 
-std::vector<Common::Debug::MemoryPatch> cc_patches;
+#pragma region CC_Changes
+extern std::vector<Common::Debug::MemoryPatch> cc_patches;
+#pragma endregion CC_Changes
 
 // Returns the latest emulation speed (1 is full speed) (swings a lot)
 double GetActualEmulationSpeed();
 
 void Callback_FramePresented(double actual_emulation_speed = 1.0);
-void Callback_NewField();
+void Callback_NewField(Core::System& system);
 
 enum class State
 {
@@ -114,12 +119,46 @@ enum class ConsoleType : u32
   ReservedTDEVSystem = 0x20000007,
 };
 
+// Run a function as the CPU thread. This is an RAII alternative to the RunAsCPUThread function.
+//
+// If constructed from the Host thread, the CPU thread is paused and the current thread temporarily
+// becomes the CPU thread.
+// If constructed from the CPU thread, nothing special happens.
+//
+// This should only be constructed from the CPU thread or the host thread.
+//
+// Some functions use a parameter of this type to indicate that the function should only be called
+// from the CPU thread. If the parameter is a pointer, the function has a fallback for being called
+// from the wrong thread (with the argument being set to nullptr).
+class CPUThreadGuard final
+{
+public:
+  explicit CPUThreadGuard(Core::System& system);
+  ~CPUThreadGuard();
+
+  CPUThreadGuard(const CPUThreadGuard&) = delete;
+  CPUThreadGuard(CPUThreadGuard&&) = delete;
+  CPUThreadGuard& operator=(const CPUThreadGuard&) = delete;
+  CPUThreadGuard& operator=(CPUThreadGuard&&) = delete;
+
+  Core::System& GetSystem() const { return m_system; }
+
+private:
+  Core::System& m_system;
+  const bool m_was_cpu_thread;
+  bool m_was_unpaused = false;
+};
+
 bool Init(std::unique_ptr<BootParameters> boot, const WindowSystemInfo& wsi);
 void Stop();
 void Shutdown();
 
 void DeclareAsCPUThread();
 void UndeclareAsCPUThread();
+void DeclareAsGPUThread();
+void UndeclareAsGPUThread();
+void DeclareAsHostThread();
+void UndeclareAsHostThread();
 
 std::string StopMessage(bool main_thread, std::string_view message);
 
@@ -128,6 +167,7 @@ bool IsRunningAndStarted();       // is running and the CPU loop has been entere
 bool IsRunningInCurrentThread();  // this tells us whether we are running in the CPU thread.
 bool IsCPUThread();               // this tells us whether we are the CPU thread.
 bool IsGPUThread();
+bool IsHostThread();
 
 bool WantsDeterminism();
 
@@ -139,6 +179,7 @@ void SaveScreenShot();
 void SaveScreenShot(std::string_view name);
 
 // This displays messages in a user-visible way.
+#pragma region CC_Changes
 __declspec(dllexport) void DisplayMessage(std::string message, int time_in_ms);
 __declspec(dllexport) void DisplayMessageParams(MessageParams* params);
 __declspec(dllexport) void uncache_jit();
@@ -149,14 +190,10 @@ __declspec(dllexport) void MemFreeze(unsigned int address, int value, unsigned i
 __declspec(dllexport) void MemFreezeParams(FreezeParams* params);
 __declspec(dllexport) void MemUnfreeze(unsigned int address);
 __declspec(dllexport) void MemUnfreezeParams(UnfreezeParams* params);
+#pragma endregion CC_Changes
 
 void FrameUpdateOnCPUThread();
 void OnFrameEnd();
-
-void VideoThrottle();
-void RequestRefreshInfo();
-
-void UpdateTitle(u32 ElapseTime);
 
 // Run a function as the CPU thread.
 //
@@ -200,5 +237,7 @@ void HostDispatchJobs();
 void DoFrameStep();
 
 void UpdateInputGate(bool require_focus, bool require_full_focus = false);
+
+void UpdateTitle();
 
 }  // namespace Core

@@ -1,6 +1,5 @@
 // Copyright 2021 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #pragma once
 
@@ -52,6 +51,8 @@ public:
   virtual void LogRead(const void* data, std::size_t length, s32 socket, sockaddr* from) = 0;
   virtual void LogWrite(const void* data, std::size_t length, s32 socket, sockaddr* to) = 0;
 
+  virtual void LogBBA(const void* data, std::size_t length) = 0;
+
   virtual NetworkCaptureType GetCaptureType() const = 0;
 };
 
@@ -65,6 +66,8 @@ public:
 
   void LogRead(const void* data, std::size_t length, s32 socket, sockaddr* from) override;
   void LogWrite(const void* data, std::size_t length, s32 socket, sockaddr* to) override;
+
+  void LogBBA(const void* data, std::size_t length) override;
 
   NetworkCaptureType GetCaptureType() const override;
 };
@@ -92,6 +95,8 @@ public:
   void LogRead(const void* data, std::size_t length, s32 socket, sockaddr* from) override;
   void LogWrite(const void* data, std::size_t length, s32 socket, sockaddr* to) override;
 
+  void LogBBA(const void* data, std::size_t length) override;
+
   NetworkCaptureType GetCaptureType() const override;
 
 private:
@@ -100,15 +105,6 @@ private:
     Read,
     Write,
   };
-  struct ErrorState
-  {
-    int error;
-#ifdef _WIN32
-    int wsa_error;
-#endif
-  };
-  ErrorState SaveState() const;
-  void RestoreState(const ErrorState& state) const;
 
   void Log(LogType log_type, const void* data, std::size_t length, s32 socket, sockaddr* other);
   void LogIPv4(LogType log_type, const u8* data, u16 length, s32 socket, const sockaddr_in& from,

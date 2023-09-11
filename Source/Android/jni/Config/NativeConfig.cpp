@@ -1,6 +1,5 @@
 // Copyright 2020 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <memory>
 #include <string>
@@ -12,11 +11,13 @@
 #include "Core/ConfigLoaders/GameConfigLoader.h"
 #include "Core/ConfigLoaders/IsSettingSaveable.h"
 #include "jni/AndroidCommon/AndroidCommon.h"
+#include "jni/Host.h"
 
 constexpr jint LAYER_BASE_OR_CURRENT = 0;
 constexpr jint LAYER_BASE = 1;
 constexpr jint LAYER_LOCAL_GAME = 2;
 constexpr jint LAYER_ACTIVE = 3;
+constexpr jint LAYER_CURRENT = 4;
 
 static Config::Location GetLocation(JNIEnv* env, jstring file, jstring section, jstring key)
 {
@@ -38,6 +39,14 @@ static Config::Location GetLocation(JNIEnv* env, jstring file, jstring section, 
   else if (decoded_file == "Logger")
   {
     system = Config::System::Logger;
+  }
+  else if (decoded_file == "WiimoteNew")
+  {
+    system = Config::System::WiiPad;
+  }
+  else if (decoded_file == "GameSettingsOnly")
+  {
+    system = Config::System::GameSettingsOnly;
   }
   else
   {
@@ -71,6 +80,10 @@ static std::shared_ptr<Config::Layer> GetLayer(jint layer, const Config::Locatio
 
   case LAYER_ACTIVE:
     layer_type = Config::GetActiveLayerForConfig(location);
+    break;
+
+  case LAYER_CURRENT:
+    layer_type = Config::LayerType::CurrentRun;
     break;
 
   default:
@@ -110,6 +123,7 @@ Java_org_dolphinemu_dolphinemu_features_settings_model_NativeConfig_loadGameInis
                                                                                  jstring jGameId,
                                                                                  jint jRevision)
 {
+  HostThreadLock guard;
   const std::string game_id = GetJString(env, jGameId);
   const u16 revision = static_cast<u16>(jRevision);
   Config::AddLayer(ConfigLoaders::GenerateGlobalGameConfigLoader(game_id, revision));
@@ -119,6 +133,7 @@ Java_org_dolphinemu_dolphinemu_features_settings_model_NativeConfig_loadGameInis
 JNIEXPORT void JNICALL
 Java_org_dolphinemu_dolphinemu_features_settings_model_NativeConfig_unloadGameInis(JNIEnv*, jclass)
 {
+  HostThreadLock guard;
   Config::RemoveLayer(Config::LayerType::GlobalGame);
   Config::RemoveLayer(Config::LayerType::LocalGame);
 }
@@ -126,12 +141,16 @@ Java_org_dolphinemu_dolphinemu_features_settings_model_NativeConfig_unloadGameIn
 JNIEXPORT void JNICALL Java_org_dolphinemu_dolphinemu_features_settings_model_NativeConfig_save(
     JNIEnv*, jclass, jint layer)
 {
-  const std::shared_ptr<Config::Layer> layer_ptr = GetLayer(layer, {});
+  HostThreadLock guard;
+  return GetLayer(layer, {})->Save();
+}
 
-  // Workaround for the Settings class carrying around a legacy map of settings it always saves
-  layer_ptr->MarkAsDirty();
-
-  return layer_ptr->Save();
+JNIEXPORT void JNICALL
+Java_org_dolphinemu_dolphinemu_features_settings_model_NativeConfig_deleteAllKeys(JNIEnv*, jclass,
+                                                                                  jint layer)
+{
+  HostThreadLock guard;
+  return GetLayer(layer, {})->DeleteAllKeys();
 }
 
 JNIEXPORT jboolean JNICALL
@@ -147,8 +166,22 @@ JNIEXPORT jboolean JNICALL
 Java_org_dolphinemu_dolphinemu_features_settings_model_NativeConfig_deleteKey(
     JNIEnv* env, jclass, jint layer, jstring file, jstring section, jstring key)
 {
+  HostThreadLock guard;
   const Config::Location location = GetLocation(env, file, section, key);
-  return static_cast<jboolean>(GetLayer(layer, location)->DeleteKey(location));
+  const bool had_value = GetLayer(layer, location)->DeleteKey(location);
+  if (had_value)
+    Config::OnConfigChanged();
+  return static_cast<jboolean>(had_value);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_org_dolphinemu_dolphinemu_features_settings_model_NativeConfig_exists(JNIEnv* env, jclass,
+                                                                           jint layer, jstring file,
+                                                                           jstring section,
+                                                                           jstring key)
+{
+  const Config::Location location = GetLocation(env, file, section, key);
+  return static_cast<jboolean>(GetLayer(layer, location)->Exists(location));
 }
 
 JNIEXPORT jstring JNICALL
@@ -187,6 +220,7 @@ JNIEXPORT void JNICALL
 Java_org_dolphinemu_dolphinemu_features_settings_model_NativeConfig_setString(
     JNIEnv* env, jclass, jint layer, jstring file, jstring section, jstring key, jstring value)
 {
+  HostThreadLock guard;
   return Set(layer, GetLocation(env, file, section, key), GetJString(env, value));
 }
 
@@ -194,18 +228,21 @@ JNIEXPORT void JNICALL
 Java_org_dolphinemu_dolphinemu_features_settings_model_NativeConfig_setBoolean(
     JNIEnv* env, jclass, jint layer, jstring file, jstring section, jstring key, jboolean value)
 {
+  HostThreadLock guard;
   return Set(layer, GetLocation(env, file, section, key), static_cast<bool>(value));
 }
 
 JNIEXPORT void JNICALL Java_org_dolphinemu_dolphinemu_features_settings_model_NativeConfig_setInt(
     JNIEnv* env, jclass, jint layer, jstring file, jstring section, jstring key, jint value)
 {
+  HostThreadLock guard;
   return Set(layer, GetLocation(env, file, section, key), value);
 }
 
 JNIEXPORT void JNICALL Java_org_dolphinemu_dolphinemu_features_settings_model_NativeConfig_setFloat(
     JNIEnv* env, jclass, jint layer, jstring file, jstring section, jstring key, jfloat value)
 {
+  HostThreadLock guard;
   return Set(layer, GetLocation(env, file, section, key), value);
 }
 }

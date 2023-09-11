@@ -1,6 +1,5 @@
 // Copyright 2008 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #pragma once
 
@@ -40,7 +39,7 @@ struct SQueuedEvent
 class BluetoothEmuDevice final : public BluetoothBaseDevice
 {
 public:
-  BluetoothEmuDevice(Kernel& ios, const std::string& device_name);
+  BluetoothEmuDevice(EmulationKernel& ios, const std::string& device_name);
 
   virtual ~BluetoothEmuDevice();
 
@@ -61,7 +60,7 @@ public:
   void DoState(PointerWrap& p) override;
 
 private:
-  std::vector<std::unique_ptr<WiimoteDevice>> m_wiimotes;
+  std::array<std::unique_ptr<WiimoteDevice>, MAX_BBMOTES> m_wiimotes;
 
   bdaddr_t m_controller_bd{{0x11, 0x02, 0x19, 0x79, 0x00, 0xff}};
 
@@ -75,7 +74,7 @@ private:
   class ACLPool
   {
   public:
-    explicit ACLPool(Kernel& ios) : m_ios(ios), m_queue() {}
+    explicit ACLPool(EmulationKernel& ios) : m_ios(ios), m_queue() {}
     void Store(const u8* data, const u16 size, const u16 conn_handle);
 
     void WriteToEndpoint(const USB::V0BulkMessage& endpoint);
@@ -92,9 +91,9 @@ private:
       u16 conn_handle;
     };
 
-    Kernel& m_ios;
+    EmulationKernel& m_ios;
     std::deque<Packet> m_queue;
-  } m_acl_pool{m_ios};
+  } m_acl_pool{GetEmulationKernel()};
 
   u32 m_packet_count[MAX_BBMOTES] = {};
   u64 m_last_ticks = 0;

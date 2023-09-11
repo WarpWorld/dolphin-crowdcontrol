@@ -1,6 +1,5 @@
 // Copyright 2008 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "Core/MemTools.h"
 
@@ -17,6 +16,7 @@
 
 #include "Core/MachineContext.h"
 #include "Core/PowerPC/JitInterface.h"
+#include "Core/System.h"
 
 #if defined(__FreeBSD__) || defined(__NetBSD__)
 #include <signal.h>
@@ -61,7 +61,7 @@ static LONG NTAPI Handler(PEXCEPTION_POINTERS pPtrs)
     uintptr_t fault_address = (uintptr_t)pPtrs->ExceptionRecord->ExceptionInformation[1];
     SContext* ctx = pPtrs->ContextRecord;
 
-    if (JitInterface::HandleFault(fault_address, ctx))
+    if (Core::System::GetInstance().GetJitInterface().HandleFault(fault_address, ctx))
     {
       return EXCEPTION_CONTINUE_EXECUTION;
     }
@@ -73,7 +73,7 @@ static LONG NTAPI Handler(PEXCEPTION_POINTERS pPtrs)
   }
 
   case EXCEPTION_STACK_OVERFLOW:
-    if (JitInterface::HandleStackFault())
+    if (Core::System::GetInstance().GetJitInterface().HandleStackFault())
       return EXCEPTION_CONTINUE_EXECUTION;
     else
       return EXCEPTION_CONTINUE_SEARCH;
@@ -112,6 +112,11 @@ void UninstallExceptionHandler()
   ASSERT(status);
   if (status)
     s_veh_handle = nullptr;
+}
+
+bool IsExceptionHandlerSupported()
+{
+  return true;
 }
 
 #elif defined(__APPLE__) && !defined(USE_SIGACTION_ON_APPLE)
@@ -153,7 +158,6 @@ static void ExceptionThread(mach_port_t port)
 #pragma pack()
   memset(&msg_in, 0xee, sizeof(msg_in));
   memset(&msg_out, 0xee, sizeof(msg_out));
-  mach_msg_header_t* send_msg = nullptr;
   mach_msg_size_t send_size = 0;
   mach_msg_option_t option = MACH_RCV_MSG;
   while (true)
@@ -163,7 +167,7 @@ static void ExceptionThread(mach_port_t port)
     // thread_set_exception_ports, or MACH_NOTIFY_NO_SENDERS due to
     // mach_port_request_notification.
     CheckKR("mach_msg_overwrite",
-            mach_msg_overwrite(send_msg, option, send_size, sizeof(msg_in), port,
+            mach_msg_overwrite(&msg_out.Head, option, send_size, sizeof(msg_in), port,
                                MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL, &msg_in.Head, 0));
 
     if (msg_in.Head.msgh_id == MACH_NOTIFY_NO_SENDERS)
@@ -187,7 +191,8 @@ static void ExceptionThread(mach_port_t port)
 
     thread_state64_t* state = (thread_state64_t*)msg_in.old_state;
 
-    bool ok = JitInterface::HandleFault((uintptr_t)msg_in.code[1], state);
+    bool ok =
+        Core::System::GetInstance().GetJitInterface().HandleFault((uintptr_t)msg_in.code[1], state);
 
     // Set up the reply.
     msg_out.Head.msgh_bits = MACH_MSGH_BITS(MACH_MSGH_BITS_REMOTE(msg_in.Head.msgh_bits), 0);
@@ -212,7 +217,6 @@ static void ExceptionThread(mach_port_t port)
     msg_out.Head.msgh_size =
         offsetof(__typeof__(msg_out), new_state) + msg_out.new_stateCnt * sizeof(natural_t);
 
-    send_msg = &msg_out.Head;
     send_size = msg_out.Head.msgh_size;
     option |= MACH_SEND_MSG;
   }
@@ -246,6 +250,11 @@ void UninstallExceptionHandler()
 {
 }
 
+bool IsExceptionHandlerSupported()
+{
+  return true;
+}
+
 #elif defined(_POSIX_VERSION) && !defined(_M_GENERIC)
 
 static struct sigaction old_sa_segv;
@@ -274,13 +283,13 @@ static void sigsegv_handler(int sig, siginfo_t* info, void* raw_context)
   mcontext_t* ctx = &context->uc_mcontext;
 #endif
   // assume it's not a write
-  if (!JitInterface::HandleFault(bad_address,
+  if (!Core::System::GetInstance().GetJitInterface().HandleFault(bad_address,
 #ifdef __APPLE__
-                                 *ctx
+                                                                 *ctx
 #else
-                                 ctx
+                                                                 ctx
 #endif
-                                 ))
+                                                                 ))
   {
     // retry and crash
     // According to the sigaction man page, if sa_flags "SA_SIGINFO" is set to the sigaction
@@ -329,7 +338,7 @@ void InstallExceptionHandler()
   signal_stack.ss_size = SIGSTKSZ;
   signal_stack.ss_flags = 0;
   if (sigaltstack(&signal_stack, nullptr))
-    PanicAlert("sigaltstack failed");
+    PanicAlertFmt("sigaltstack failed");
   struct sigaction sa;
   sa.sa_handler = nullptr;
   sa.sa_sigaction = &sigsegv_handler;
@@ -354,13 +363,25 @@ void UninstallExceptionHandler()
   sigaction(SIGBUS, &old_sa_bus, nullptr);
 #endif
 }
+
+bool IsExceptionHandlerSupported()
+{
+  return true;
+}
+
 #else  // _M_GENERIC or unsupported platform
 
 void InstallExceptionHandler()
 {
 }
+
 void UninstallExceptionHandler()
 {
+}
+
+bool IsExceptionHandlerSupported()
+{
+  return false;
 }
 
 #endif

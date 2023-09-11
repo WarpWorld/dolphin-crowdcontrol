@@ -1,6 +1,5 @@
 // Copyright 2015 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #pragma once
 
@@ -8,9 +7,12 @@
 
 #include <QFont>
 #include <QObject>
+#include <QRadioButton>
 #include <QSettings>
 
+#include "Core/Config/MainSettings.h"
 #include "DiscIO/Enums.h"
+#include "InputCommon/ControllerInterface/ControllerInterface.h"
 
 namespace Core
 {
@@ -43,11 +45,18 @@ public:
 
   ~Settings();
 
+  void UnregisterDevicesChangedCallback();
+
   static Settings& Instance();
   static QSettings& GetQSettings();
 
   // UI
   void SetThemeName(const QString& theme_name);
+  void InitDefaultPalette();
+  void UpdateSystemDark();
+  void SetSystemDark(bool dark);
+  bool IsSystemDark();
+  bool IsThemeDark();
   void SetCurrentUserStyle(const QString& stylesheet_name);
   QString GetCurrentUserStyle() const;
 
@@ -98,12 +107,14 @@ public:
   void SetUSBKeyboardConnected(bool connected);
 
   // Graphics
-  void SetHideCursor(bool hide_cursor);
-  bool GetHideCursor() const;
+  void SetCursorVisibility(Config::ShowCursor hideCursor);
+  Config::ShowCursor GetCursorVisibility() const;
   void SetLockCursor(bool lock_cursor);
   bool GetLockCursor() const;
   void SetKeepWindowOnTop(bool top);
   bool IsKeepWindowOnTopEnabled() const;
+  bool GetGraphicModsEnabled() const;
+  void SetGraphicModsEnabled(bool enabled);
 
   // Audio
   int GetVolume() const;
@@ -169,7 +180,7 @@ signals:
   void MetadataRefreshRequested();
   void MetadataRefreshCompleted();
   void AutoRefreshToggled(bool enabled);
-  void HideCursorChanged();
+  void CursorVisibilityChanged();
   void LockCursorChanged();
   void KeepWindowOnTopChanged(bool top);
   void VolumeChanged(int volume);
@@ -192,15 +203,19 @@ signals:
   void AutoUpdateTrackChanged(const QString& mode);
   void FallbackRegionChanged(const DiscIO::Region& region);
   void AnalyticsToggled(bool enabled);
+  void ReleaseDevices();
   void DevicesChanged();
   void SDCardInsertionChanged(bool inserted);
   void USBKeyboardConnectionChanged(bool connected);
+  void EnableGfxModsChanged(bool enabled);
 
 private:
+  Settings();
+
   bool m_batch = false;
   std::shared_ptr<NetPlay::NetPlayClient> m_client;
   std::shared_ptr<NetPlay::NetPlayServer> m_server;
-  Settings();
+  ControllerInterface::HotplugCallbackHandle m_hotplug_callback_handle;
 };
 
 Q_DECLARE_METATYPE(Core::State);

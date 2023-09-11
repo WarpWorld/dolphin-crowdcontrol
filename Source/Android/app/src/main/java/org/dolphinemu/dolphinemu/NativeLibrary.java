@@ -1,7 +1,6 @@
 /*
  * Copyright 2013 Dolphin Emulator Project
- * Licensed under GPLv2+
- * Refer to the license.txt file included.
+ * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
 package org.dolphinemu.dolphinemu;
@@ -19,7 +18,6 @@ import org.dolphinemu.dolphinemu.activities.EmulationActivity;
 import org.dolphinemu.dolphinemu.dialogs.AlertMessage;
 import org.dolphinemu.dolphinemu.utils.CompressCallback;
 import org.dolphinemu.dolphinemu.utils.Log;
-import org.dolphinemu.dolphinemu.utils.Rumble;
 
 import java.lang.ref.WeakReference;
 import java.util.LinkedHashMap;
@@ -45,7 +43,7 @@ public final class NativeLibrary
   }
 
   /**
-   * Button type for use in onTouchEvent
+   * Button type, for legacy use only
    */
   public static final class ButtonType
   {
@@ -236,55 +234,6 @@ public final class NativeLibrary
   }
 
   /**
-   * Default touchscreen device
-   */
-  public static final String TouchScreenDevice = "Touchscreen";
-
-  /**
-   * Handles button press events for a gamepad.
-   *
-   * @param Device The input descriptor of the gamepad.
-   * @param Button Key code identifying which button was pressed.
-   * @param Action Mask identifying which action is happening (button pressed down, or button released).
-   * @return If we handled the button press.
-   */
-  public static native boolean onGamePadEvent(String Device, int Button, int Action);
-
-  /**
-   * Handles gamepad movement events.
-   *
-   * @param Device The device ID of the gamepad.
-   * @param Axis   The axis ID
-   * @param Value  The value of the axis represented by the given ID.
-   */
-  public static native void onGamePadMoveEvent(String Device, int Axis, float Value);
-
-  /**
-   * Rumble sent from native. Currently only supports phone rumble.
-   *
-   * @param padID Ignored for now. Future use would be to pass rumble to a connected controller
-   * @param state Ignored for now since phone rumble can't just be 'turned' on/off
-   */
-  @Keep
-  public static void rumble(int padID, double state)
-  {
-    final EmulationActivity emulationActivity = sEmulationActivity.get();
-    if (emulationActivity == null)
-    {
-      Log.warning("[NativeLibrary] EmulationActivity is null");
-      return;
-    }
-
-    Rumble.checkRumble(padID, state);
-  }
-
-  public static native void SetMotionSensorsEnabled(boolean accelerometerEnabled,
-          boolean gyroscopeEnabled);
-
-  // Angle is in radians and should be non-negative
-  public static native double GetInputRadiusAtAngle(int emu_pad_id, int stick, double angle);
-
-  /**
    * Gets the Dolphin version string.
    *
    * @return the Dolphin version string.
@@ -348,6 +297,8 @@ public final class NativeLibrary
 
   public static native void SetCacheDirectory(String directory);
 
+  public static native String GetCacheDirectory();
+
   public static native int DefaultCPUCore();
 
   public static native String GetDefaultGraphicsBackendName();
@@ -380,12 +331,18 @@ public final class NativeLibrary
   /**
    * Begins emulation.
    */
-  public static native void Run(String[] path);
+  public static native void Run(String[] path, boolean riivolution);
 
   /**
    * Begins emulation from the specified savestate.
    */
-  public static native void Run(String[] path, String savestatePath, boolean deleteSavestate);
+  public static native void Run(String[] path, boolean riivolution, String savestatePath,
+          boolean deleteSavestate);
+
+  /**
+   * Begins emulation of the System Menu.
+   */
+  public static native void RunSystemMenu();
 
   public static native void ChangeDisc(String path);
 
@@ -393,6 +350,8 @@ public final class NativeLibrary
   public static native void SurfaceChanged(Surface surf);
 
   public static native void SurfaceDestroyed();
+
+  public static native boolean HasSurface();
 
   /**
    * Unpauses emulation from a paused state.
@@ -410,11 +369,20 @@ public final class NativeLibrary
   public static native void StopEmulation();
 
   /**
+   * Ensures that IsRunning will return true from now on until emulation exits.
+   * (If this is not called, IsRunning will start returning true at some point
+   * after calling Run.)
+   */
+  public static native void SetIsBooting();
+
+  /**
    * Returns true if emulation is running (or is paused).
    */
   public static native boolean IsRunning();
 
   public static native boolean IsRunningAndStarted();
+
+  public static native boolean IsRunningAndUnpaused();
 
   /**
    * Enables or disables CPU block profiling
@@ -437,8 +405,6 @@ public final class NativeLibrary
    * Provides a way to refresh the connections on Wiimotes
    */
   public static native void RefreshWiimotes();
-
-  public static native void ReloadWiimoteConfig();
 
   public static native LinkedHashMap<String, String> GetLogTypeNames();
 
@@ -495,59 +461,54 @@ public final class NativeLibrary
     Log.error("[NativeLibrary] Alert: " + text);
     final EmulationActivity emulationActivity = sEmulationActivity.get();
     boolean result = false;
-    if (isWarning && emulationActivity != null && emulationActivity.isIgnoringWarnings())
+
+    // We can't use AlertMessages unless we have a non-null activity reference
+    // and are allowed to block. As a fallback, we can use toasts.
+    if (emulationActivity == null || nonBlocking)
     {
-      return true;
+      new Handler(Looper.getMainLooper()).post(
+              () -> Toast.makeText(DolphinApplication.getAppContext(), text, Toast.LENGTH_LONG)
+                      .show());
     }
     else
     {
-      // We can't use AlertMessages unless we have a non-null activity reference
-      // and are allowed to block. As a fallback, we can use toasts.
-      if (emulationActivity == null || nonBlocking)
+      sIsShowingAlertMessage = true;
+
+      emulationActivity.runOnUiThread(() ->
       {
-        new Handler(Looper.getMainLooper()).post(
-                () -> Toast.makeText(DolphinApplication.getAppContext(), text, Toast.LENGTH_LONG)
-                        .show());
+        FragmentManager fragmentManager = emulationActivity.getSupportFragmentManager();
+        if (fragmentManager.isStateSaved())
+        {
+          // The activity is being destroyed, so we can't use it to display an AlertMessage.
+          // Fall back to a toast.
+          Toast.makeText(emulationActivity, text, Toast.LENGTH_LONG).show();
+          NotifyAlertMessageLock();
+        }
+        else
+        {
+          AlertMessage.newInstance(caption, text, yesNo, isWarning)
+                  .show(fragmentManager, "AlertMessage");
+        }
+      });
+
+      // Wait for the lock to notify that it is complete.
+      synchronized (sAlertMessageLock)
+      {
+        try
+        {
+          sAlertMessageLock.wait();
+        }
+        catch (Exception ignored)
+        {
+        }
       }
-      else
+
+      if (yesNo)
       {
-        sIsShowingAlertMessage = true;
-
-        emulationActivity.runOnUiThread(() ->
-        {
-          FragmentManager fragmentManager = emulationActivity.getSupportFragmentManager();
-          if (fragmentManager.isStateSaved())
-          {
-            // The activity is being destroyed, so we can't use it to display an AlertMessage.
-            // Fall back to a toast.
-            Toast.makeText(emulationActivity, text, Toast.LENGTH_LONG).show();
-            NotifyAlertMessageLock();
-          }
-          else
-          {
-            AlertMessage.newInstance(caption, text, yesNo, isWarning)
-                    .show(fragmentManager, "AlertMessage");
-          }
-        });
-
-        // Wait for the lock to notify that it is complete.
-        synchronized (sAlertMessageLock)
-        {
-          try
-          {
-            sAlertMessageLock.wait();
-          }
-          catch (Exception ignored)
-          {
-          }
-        }
-
-        if (yesNo)
-        {
-          result = AlertMessage.getAlertResult();
-        }
+        result = AlertMessage.getAlertResult();
       }
     }
+
     sIsShowingAlertMessage = false;
     return result;
   }

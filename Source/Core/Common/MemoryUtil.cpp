@@ -1,6 +1,7 @@
 // Copyright 2008 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+#include "Common/MemoryUtil.h"
 
 #include <cstddef>
 #include <cstdlib>
@@ -9,7 +10,6 @@
 #include "Common/CommonFuncs.h"
 #include "Common/CommonTypes.h"
 #include "Common/Logging/Log.h"
-#include "Common/MemoryUtil.h"
 #include "Common/MsgHandler.h"
 
 #ifdef _WIN32
@@ -41,11 +41,7 @@ void* AllocateExecutableMemory(size_t size)
 #else
   int map_flags = MAP_ANON | MAP_PRIVATE;
 #if defined(__APPLE__)
-  // This check is in place to prepare for x86_64 MAP_JIT support. While MAP_JIT did exist
-  // prior to 10.14, it had restrictions on the number of JIT allocations that were removed
-  // in 10.14.
-  if (__builtin_available(macOS 10.14, *))
-    map_flags |= MAP_JIT;
+  map_flags |= MAP_JIT;
 #endif
   void* ptr = mmap(nullptr, size, PROT_READ | PROT_WRITE | PROT_EXEC, map_flags, -1, 0);
   if (ptr == MAP_FAILED)
@@ -254,7 +250,7 @@ size_t MemPhysical()
   mib[1] = HW_PHYSMEM64;
 #endif
   size_t length = sizeof(size_t);
-  sysctl(mib, 2, &physical_memory, &length, NULL, 0);
+  sysctl(mib, 2, &physical_memory, &length, nullptr, 0);
   return physical_memory;
 #elif defined __HAIKU__
   system_info sysinfo;

@@ -1,6 +1,5 @@
 // Copyright 2015 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "DolphinQt/RenderWidget.h"
 
@@ -20,10 +19,7 @@
 #include <QTimer>
 #include <QWindow>
 
-#include "imgui.h"
-
 #include "Core/Config/MainSettings.h"
-#include "Core/ConfigManager.h"
 #include "Core/Core.h"
 #include "Core/State.h"
 
@@ -34,12 +30,12 @@
 
 #include "InputCommon/ControllerInterface/ControllerInterface.h"
 
-#include "VideoCommon/RenderBase.h"
+#include "VideoCommon/OnScreenUI.h"
+#include "VideoCommon/Present.h"
 #include "VideoCommon/VideoConfig.h"
 
 #ifdef _WIN32
-#include <WinUser.h>
-#include <windef.h>
+#include <Windows.h>
 #endif
 
 RenderWidget::RenderWidget(QWidget* parent) : QWidget(parent)
@@ -65,7 +61,7 @@ RenderWidget::RenderWidget(QWidget* parent) : QWidget(parent)
 
   connect(&Settings::Instance(), &Settings::EmulationStateChanged, this, [this](Core::State state) {
     if (state == Core::State::Running)
-      SetImGuiKeyMap();
+      SetPresenterKeyMap();
   });
 
   // We have to use Qt::DirectConnection here because we don't want those signals to get queued
@@ -84,7 +80,7 @@ RenderWidget::RenderWidget(QWidget* parent) : QWidget(parent)
   m_mouse_timer->setSingleShot(true);
   setMouseTracking(true);
 
-  connect(&Settings::Instance(), &Settings::HideCursorChanged, this,
+  connect(&Settings::Instance(), &Settings::CursorVisibilityChanged, this,
           &RenderWidget::OnHideCursorChanged);
   connect(&Settings::Instance(), &Settings::LockCursorChanged, this,
           &RenderWidget::OnLockCursorChanged);
@@ -140,6 +136,7 @@ void RenderWidget::OnHideCursorChanged()
 {
   UpdateCursor();
 }
+
 void RenderWidget::OnLockCursorChanged()
 {
   SetCursorLocked(false);
@@ -156,14 +153,16 @@ void RenderWidget::UpdateCursor()
     // on top of the game window in the background
     const bool keep_on_top = (windowFlags() & Qt::WindowStaysOnTopHint) != 0;
     const bool should_hide =
-        Settings::Instance().GetHideCursor() &&
-        (keep_on_top || SConfig::GetInstance().m_BackgroundInput || isActiveWindow());
+        (Settings::Instance().GetCursorVisibility() == Config::ShowCursor::Never) &&
+        (keep_on_top || Config::Get(Config::MAIN_INPUT_BACKGROUND_INPUT) || isActiveWindow());
     setCursor(should_hide ? Qt::BlankCursor : Qt::ArrowCursor);
   }
   else
   {
-    setCursor((m_cursor_locked && Settings::Instance().GetHideCursor()) ? Qt::BlankCursor :
-                                                                          Qt::ArrowCursor);
+    setCursor((m_cursor_locked &&
+               Settings::Instance().GetCursorVisibility() == Config::ShowCursor::Never) ?
+                  Qt::BlankCursor :
+                  Qt::ArrowCursor);
   }
 }
 
@@ -186,7 +185,8 @@ void RenderWidget::HandleCursorTimer()
 {
   if (!isActiveWindow())
     return;
-  if (!Settings::Instance().GetLockCursor() || m_cursor_locked)
+  if ((!Settings::Instance().GetLockCursor() || m_cursor_locked) &&
+      Settings::Instance().GetCursorVisibility() == Config::ShowCursor::OnMovement)
   {
     setCursor(Qt::BlankCursor);
   }
@@ -269,7 +269,7 @@ void RenderWidget::SetCursorLocked(bool locked, bool follow_aspect_ratio)
     {
       m_cursor_locked = true;
 
-      if (Settings::Instance().GetHideCursor())
+      if (Settings::Instance().GetCursorVisibility() != Config::ShowCursor::Constantly)
       {
         setCursor(Qt::BlankCursor);
       }
@@ -337,7 +337,7 @@ void RenderWidget::SetWaitingForMessageBox(bool waiting_for_message_box)
 
 bool RenderWidget::event(QEvent* event)
 {
-  PassEventToImGui(event);
+  PassEventToPresenter(event);
 
   switch (event->type())
   {
@@ -363,16 +363,18 @@ bool RenderWidget::event(QEvent* event)
     {
       // Lock the cursor with any mouse button click (behave the same as window focus change).
       // This event is occasionally missed because isActiveWindow is laggy
-      if (Settings::Instance().GetLockCursor() && event->type() == QEvent::MouseButtonPress)
+      if (Settings::Instance().GetLockCursor())
       {
         SetCursorLocked(true);
       }
-      // Unhide on movement
-      if (!Settings::Instance().GetHideCursor())
-      {
-        setCursor(Qt::ArrowCursor);
-        m_mouse_timer->start(MOUSE_HIDE_DELAY);
-      }
+    }
+    break;
+  case QEvent::MouseMove:
+    // Unhide on movement
+    if (Settings::Instance().GetCursorVisibility() == Config::ShowCursor::OnMovement)
+    {
+      setCursor(Qt::ArrowCursor);
+      m_mouse_timer->start(MOUSE_HIDE_DELAY);
     }
     break;
   case QEvent::WinIdChange:
@@ -380,7 +382,8 @@ bool RenderWidget::event(QEvent* event)
     break;
   case QEvent::Show:
     // Don't do if "stay on top" changed (or was true)
-    if (Settings::Instance().GetLockCursor() && Settings::Instance().GetHideCursor() &&
+    if (Settings::Instance().GetLockCursor() &&
+        Settings::Instance().GetCursorVisibility() != Config::ShowCursor::Constantly &&
         !m_dont_lock_cursor_on_show)
     {
       // Auto lock when this window is shown (it was hidden)
@@ -393,8 +396,10 @@ bool RenderWidget::event(QEvent* event)
   // Note that this event in Windows is not always aligned to the window that is highlighted,
   // it's the window that has keyboard and mouse focus
   case QEvent::WindowActivate:
-    if (SConfig::GetInstance().m_PauseOnFocusLost && Core::GetState() == Core::State::Paused)
+    if (m_should_unpause_on_focus && Core::GetState() == Core::State::Paused)
       Core::SetState(Core::State::Running);
+
+    m_should_unpause_on_focus = false;
 
     UpdateCursor();
 
@@ -415,13 +420,16 @@ bool RenderWidget::event(QEvent* event)
 
     UpdateCursor();
 
-    if (SConfig::GetInstance().m_PauseOnFocusLost && Core::GetState() == Core::State::Running)
+    if (Config::Get(Config::MAIN_PAUSE_ON_FOCUS_LOST) && Core::GetState() == Core::State::Running)
     {
-      // If we are declared as the CPU thread, it means that the real CPU thread is waiting
-      // for us to finish showing a panic alert (with that panic alert likely being the cause
-      // of this event), so trying to pause the real CPU thread would cause a deadlock
-      if (!Core::IsCPUThread())
+      // If we are declared as the CPU or GPU thread, it means that the real CPU or GPU thread
+      // is waiting for us to finish showing a panic alert (with that panic alert likely being
+      // the cause of this event), so trying to pause the core would cause a deadlock
+      if (!Core::IsCPUThread() && !Core::IsGPUThread())
+      {
+        m_should_unpause_on_focus = true;
         Core::SetState(Core::State::Paused);
+      }
     }
 
     emit FocusChanged(false);
@@ -429,6 +437,10 @@ bool RenderWidget::event(QEvent* event)
   case QEvent::Move:
     SetCursorLocked(m_cursor_locked);
     break;
+
+  // According to https://bugreports.qt.io/browse/QTBUG-95925 the recommended practice for
+  // handling DPI change is responding to paint events
+  case QEvent::Paint:
   case QEvent::Resize:
   {
     SetCursorLocked(m_cursor_locked);
@@ -438,9 +450,18 @@ bool RenderWidget::event(QEvent* event)
 
     QScreen* screen = window()->windowHandle()->screen();
 
-    const auto dpr = screen->devicePixelRatio();
+    const float dpr = screen->devicePixelRatio();
+    const int width = new_size.width() * dpr;
+    const int height = new_size.height() * dpr;
 
-    emit SizeChanged(new_size.width() * dpr, new_size.height() * dpr);
+    if (m_last_window_width != width || m_last_window_height != height ||
+        m_last_window_scale != dpr)
+    {
+      m_last_window_width = width;
+      m_last_window_height = height;
+      m_last_window_scale = dpr;
+      emit SizeChanged(width, height);
+    }
     break;
   }
   // Happens when we add/remove the widget from the main window instead of the dedicated one
@@ -455,11 +476,13 @@ bool RenderWidget::event(QEvent* event)
   case QEvent::Close:
     emit Closed();
     break;
+  default:
+    break;
   }
   return QWidget::event(event);
 }
 
-void RenderWidget::PassEventToImGui(const QEvent* event)
+void RenderWidget::PassEventToPresenter(const QEvent* event)
 {
   if (!Core::IsRunningAndStarted())
     return;
@@ -476,38 +499,41 @@ void RenderWidget::PassEventToImGui(const QEvent* event)
     const QKeyEvent* key_event = static_cast<const QKeyEvent*>(event);
     const bool is_down = event->type() == QEvent::KeyPress;
     const u32 key = static_cast<u32>(key_event->key() & 0x1FF);
-    auto lock = g_renderer->GetImGuiLock();
-    if (key < std::size(ImGui::GetIO().KeysDown))
-      ImGui::GetIO().KeysDown[key] = is_down;
+
+    const char* chars = nullptr;
+    QByteArray utf8;
 
     if (is_down)
     {
-      auto utf8 = key_event->text().toUtf8();
-      ImGui::GetIO().AddInputCharactersUTF8(utf8.constData());
+      utf8 = key_event->text().toUtf8();
+
+      if (utf8.size())
+        chars = utf8.constData();
     }
+
+    // Pass the key onto Presenter (for the imgui UI)
+    g_presenter->SetKey(key, is_down, chars);
   }
   break;
 
   case QEvent::MouseMove:
   {
-    auto lock = g_renderer->GetImGuiLock();
-
     // Qt multiplies all coordinates by the scaling factor in highdpi mode, giving us "scaled" mouse
     // coordinates (as if the screen was standard dpi). We need to update the mouse position in
     // native coordinates, as the UI (and game) is rendered at native resolution.
     const float scale = devicePixelRatio();
-    ImGui::GetIO().MousePos.x = static_cast<const QMouseEvent*>(event)->x() * scale;
-    ImGui::GetIO().MousePos.y = static_cast<const QMouseEvent*>(event)->y() * scale;
+    float x = static_cast<const QMouseEvent*>(event)->pos().x() * scale;
+    float y = static_cast<const QMouseEvent*>(event)->pos().y() * scale;
+
+    g_presenter->SetMousePos(x, y);
   }
   break;
 
   case QEvent::MouseButtonPress:
   case QEvent::MouseButtonRelease:
   {
-    auto lock = g_renderer->GetImGuiLock();
     const u32 button_mask = static_cast<u32>(static_cast<const QMouseEvent*>(event)->buttons());
-    for (size_t i = 0; i < std::size(ImGui::GetIO().MouseDown); i++)
-      ImGui::GetIO().MouseDown[i] = (button_mask & (1u << i)) != 0;
+    g_presenter->SetMousePress(button_mask);
   }
   break;
 
@@ -516,33 +542,16 @@ void RenderWidget::PassEventToImGui(const QEvent* event)
   }
 }
 
-void RenderWidget::SetImGuiKeyMap()
+void RenderWidget::SetPresenterKeyMap()
 {
-  static constexpr std::array<std::array<int, 2>, 21> key_map{{
-      {ImGuiKey_Tab, Qt::Key_Tab},
-      {ImGuiKey_LeftArrow, Qt::Key_Left},
-      {ImGuiKey_RightArrow, Qt::Key_Right},
-      {ImGuiKey_UpArrow, Qt::Key_Up},
-      {ImGuiKey_DownArrow, Qt::Key_Down},
-      {ImGuiKey_PageUp, Qt::Key_PageUp},
-      {ImGuiKey_PageDown, Qt::Key_PageDown},
-      {ImGuiKey_Home, Qt::Key_Home},
-      {ImGuiKey_End, Qt::Key_End},
-      {ImGuiKey_Insert, Qt::Key_Insert},
-      {ImGuiKey_Delete, Qt::Key_Delete},
-      {ImGuiKey_Backspace, Qt::Key_Backspace},
-      {ImGuiKey_Space, Qt::Key_Space},
-      {ImGuiKey_Enter, Qt::Key_Return},
-      {ImGuiKey_Escape, Qt::Key_Escape},
-      {ImGuiKey_A, Qt::Key_A},
-      {ImGuiKey_C, Qt::Key_C},
-      {ImGuiKey_V, Qt::Key_V},
-      {ImGuiKey_X, Qt::Key_X},
-      {ImGuiKey_Y, Qt::Key_Y},
-      {ImGuiKey_Z, Qt::Key_Z},
-  }};
-  auto lock = g_renderer->GetImGuiLock();
+  static constexpr DolphinKeyMap key_map = {
+      Qt::Key_Tab,    Qt::Key_Left,      Qt::Key_Right, Qt::Key_Up,     Qt::Key_Down,
+      Qt::Key_PageUp, Qt::Key_PageDown,  Qt::Key_Home,  Qt::Key_End,    Qt::Key_Insert,
+      Qt::Key_Delete, Qt::Key_Backspace, Qt::Key_Space, Qt::Key_Return, Qt::Key_Escape,
+      Qt::Key_Enter,  // Keypad enter
+      Qt::Key_A,      Qt::Key_C,         Qt::Key_V,     Qt::Key_X,      Qt::Key_Y,
+      Qt::Key_Z,
+  };
 
-  for (auto [imgui_key, qt_key] : key_map)
-    ImGui::GetIO().KeyMap[imgui_key] = (qt_key & 0x1FF);
+  g_presenter->SetKeyMap(key_map);
 }

@@ -1,6 +1,5 @@
 // Copyright 2015 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "Core/HotkeyManager.h"
 
@@ -24,7 +23,7 @@
 #include "InputCommon/GCPadStatus.h"
 
 // clang-format off
-constexpr std::array<const char*, 126> s_hotkey_labels{{
+constexpr std::array<const char*, NUM_HOTKEYS> s_hotkey_labels{{
     _trans("Open"),
     _trans("Change Disc"),
     _trans("Eject Disc"),
@@ -36,6 +35,7 @@ constexpr std::array<const char*, 126> s_hotkey_labels{{
     _trans("Take Screenshot"),
     _trans("Exit"),
     _trans("Unlock Cursor"),
+    _trans("Center Mouse"),
     _trans("Activate NetPlay Chat"),
     _trans("Control NetPlay Golf Mode"),
 
@@ -179,6 +179,24 @@ constexpr std::array<const char*, 126> s_hotkey_labels{{
     _trans("Undo Save State"),
     _trans("Save State"),
     _trans("Load State"),
+    _trans("Increase Selected State Slot"),
+    _trans("Decrease Selected State Slot"),
+
+    _trans("Load ROM"),
+    _trans("Unload ROM"),
+    _trans("Reset"),
+
+    _trans("Volume Down"),
+    _trans("Volume Up"),
+    _trans("Volume Toggle Mute"),
+      
+    _trans("1x"),
+    _trans("2x"),
+    _trans("3x"),
+    _trans("4x"),
+
+    _trans("Show Skylanders Portal"),
+    _trans("Show Infinity Base")
 }};
 // clang-format on
 static_assert(NUM_HOTKEYS == s_hotkey_labels.size(), "Wrong count of hotkey_labels");
@@ -196,10 +214,10 @@ InputConfig* GetConfig()
   return &s_config;
 }
 
-void GetStatus()
+void GetStatus(bool ignore_focus)
 {
   // Get input
-  static_cast<HotkeyManager*>(s_config.GetController(0))->GetInput(&s_hotkey);
+  static_cast<HotkeyManager*>(s_config.GetController(0))->GetInput(&s_hotkey, ignore_focus);
 }
 
 bool IsEnabled()
@@ -236,7 +254,7 @@ bool IsPressed(int id, bool held)
 // TODO: Remove this at a future date when we're confident most configs are migrated.
 static void LoadLegacyConfig(ControllerEmu::EmulatedController* controller)
 {
-  IniFile inifile;
+  Common::IniFile inifile;
   if (inifile.Load(File::GetUserPath(D_CONFIG_IDX) + "Hotkeys.ini"))
   {
     if (!inifile.Exists("Hotkeys") && inifile.Exists("Hotkeys1"))
@@ -286,7 +304,7 @@ void Initialize()
 
 void LoadConfig()
 {
-  s_config.LoadConfig(true);
+  s_config.LoadConfig(InputConfig::InputClass::GC);
   LoadLegacyConfig(s_config.GetController(0));
 }
 
@@ -308,6 +326,7 @@ struct HotkeyGroupInfo
   const char* name;
   Hotkey first;
   Hotkey last;
+  bool ignore_focus = false;
 };
 
 constexpr std::array<HotkeyGroupInfo, NUM_HOTKEY_GROUPS> s_groups_info = {
@@ -335,7 +354,11 @@ constexpr std::array<HotkeyGroupInfo, NUM_HOTKEY_GROUPS> s_groups_info = {
      {_trans("Save State"), HK_SAVE_STATE_SLOT_1, HK_SAVE_STATE_SLOT_SELECTED},
      {_trans("Select State"), HK_SELECT_STATE_SLOT_1, HK_SELECT_STATE_SLOT_10},
      {_trans("Load Last State"), HK_LOAD_LAST_STATE_1, HK_LOAD_LAST_STATE_10},
-     {_trans("Other State Hotkeys"), HK_SAVE_FIRST_STATE, HK_LOAD_STATE_FILE}}};
+     {_trans("Other State Hotkeys"), HK_SAVE_FIRST_STATE, HK_DECREMENT_SELECTED_STATE_SLOT},
+     {_trans("GBA Core"), HK_GBA_LOAD, HK_GBA_RESET, true},
+     {_trans("GBA Volume"), HK_GBA_VOLUME_DOWN, HK_GBA_TOGGLE_MUTE, true},
+     {_trans("GBA Window Size"), HK_GBA_1X, HK_GBA_4X, true},
+     {_trans("USB Emulation Devices"), HK_SKYLANDERS_PORTAL, HK_INFINITY_BASE}}};
 
 HotkeyManager::HotkeyManager()
 {
@@ -346,7 +369,7 @@ HotkeyManager::HotkeyManager()
     groups.emplace_back(m_hotkey_groups[group]);
     for (int key = s_groups_info[group].first; key <= s_groups_info[group].last; key++)
     {
-      m_keys[group]->AddInput(ControllerEmu::Translate, s_hotkey_labels[key]);
+      m_keys[group]->AddInput(ControllerEmu::Translatability::Translate, s_hotkey_labels[key]);
     }
   }
 }
@@ -360,11 +383,14 @@ std::string HotkeyManager::GetName() const
   return "Hotkeys";
 }
 
-void HotkeyManager::GetInput(HotkeyStatus* const kb)
+void HotkeyManager::GetInput(HotkeyStatus* kb, bool ignore_focus)
 {
   const auto lock = GetStateLock();
   for (std::size_t group = 0; group < s_groups_info.size(); group++)
   {
+    if (s_groups_info[group].ignore_focus != ignore_focus)
+      continue;
+
     const int group_count = (s_groups_info[group].last - s_groups_info[group].first) + 1;
     std::vector<u32> bitmasks(group_count);
     for (size_t key = 0; key < bitmasks.size(); key++)
@@ -442,4 +468,33 @@ void HotkeyManager::LoadDefaults(const ControllerInterface& ciface)
   }
   set_key_expression(HK_UNDO_LOAD_STATE, "F12");
   set_key_expression(HK_UNDO_SAVE_STATE, hotkey_string({"Shift", "F12"}));
+
+  // GBA
+  set_key_expression(HK_GBA_LOAD, hotkey_string({"`Ctrl`", "`Shift`", "`O`"}));
+  set_key_expression(HK_GBA_UNLOAD, hotkey_string({"`Ctrl`", "`Shift`", "`W`"}));
+  set_key_expression(HK_GBA_RESET, hotkey_string({"`Ctrl`", "`Shift`", "`R`"}));
+
+#ifdef _WIN32
+  set_key_expression(HK_GBA_VOLUME_DOWN, "`SUBTRACT`");
+  set_key_expression(HK_GBA_VOLUME_UP, "`ADD`");
+#else
+  set_key_expression(HK_GBA_VOLUME_DOWN, "`KP_Subtract`");
+  set_key_expression(HK_GBA_VOLUME_UP, "`KP_Add`");
+#endif
+  set_key_expression(HK_GBA_TOGGLE_MUTE, "`M`");
+
+#ifdef _WIN32
+  set_key_expression(HK_GBA_1X, "`NUMPAD1`");
+  set_key_expression(HK_GBA_2X, "`NUMPAD2`");
+  set_key_expression(HK_GBA_3X, "`NUMPAD3`");
+  set_key_expression(HK_GBA_4X, "`NUMPAD4`");
+#else
+  set_key_expression(HK_GBA_1X, "`KP_1`");
+  set_key_expression(HK_GBA_2X, "`KP_2`");
+  set_key_expression(HK_GBA_3X, "`KP_3`");
+  set_key_expression(HK_GBA_4X, "`KP_4`");
+#endif
+
+  set_key_expression(HK_SKYLANDERS_PORTAL, hotkey_string({"Ctrl", "P"}));
+  set_key_expression(HK_INFINITY_BASE, hotkey_string({"Ctrl", "I"}));
 }

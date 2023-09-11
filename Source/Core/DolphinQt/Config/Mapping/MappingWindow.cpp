@@ -1,9 +1,9 @@
 // Copyright 2017 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "DolphinQt/Config/Mapping/MappingWindow.h"
 
+#include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
@@ -12,9 +12,11 @@
 #include <QPushButton>
 #include <QTabWidget>
 #include <QTimer>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include "Core/Core.h"
+#include "Core/HotkeyManager.h"
 
 #include "Common/CommonPaths.h"
 #include "Common/FileSearch.h"
@@ -24,17 +26,20 @@
 
 #include "DolphinQt/Config/Mapping/FreeLookGeneral.h"
 #include "DolphinQt/Config/Mapping/FreeLookRotation.h"
+#include "DolphinQt/Config/Mapping/GBAPadEmu.h"
 #include "DolphinQt/Config/Mapping/GCKeyboardEmu.h"
 #include "DolphinQt/Config/Mapping/GCMicrophone.h"
 #include "DolphinQt/Config/Mapping/GCPadEmu.h"
 #include "DolphinQt/Config/Mapping/Hotkey3D.h"
 #include "DolphinQt/Config/Mapping/HotkeyControllerProfile.h"
 #include "DolphinQt/Config/Mapping/HotkeyDebugging.h"
+#include "DolphinQt/Config/Mapping/HotkeyGBA.h"
 #include "DolphinQt/Config/Mapping/HotkeyGeneral.h"
 #include "DolphinQt/Config/Mapping/HotkeyGraphics.h"
 #include "DolphinQt/Config/Mapping/HotkeyStates.h"
 #include "DolphinQt/Config/Mapping/HotkeyStatesOther.h"
 #include "DolphinQt/Config/Mapping/HotkeyTAS.h"
+#include "DolphinQt/Config/Mapping/HotkeyUSBEmu.h"
 #include "DolphinQt/Config/Mapping/HotkeyWii.h"
 #include "DolphinQt/Config/Mapping/WiimoteEmuExtension.h"
 #include "DolphinQt/Config/Mapping/WiimoteEmuExtensionMotionInput.h"
@@ -43,6 +48,9 @@
 #include "DolphinQt/Config/Mapping/WiimoteEmuMotionControl.h"
 #include "DolphinQt/Config/Mapping/WiimoteEmuMotionControlIMU.h"
 #include "DolphinQt/QtUtils/ModalMessageBox.h"
+#include "DolphinQt/QtUtils/NonDefaultQPushButton.h"
+#include "DolphinQt/QtUtils/SetWindowDecorations.h"
+#include "DolphinQt/QtUtils/WindowActivationEventFilter.h"
 #include "DolphinQt/QtUtils/WrapInScrollArea.h"
 #include "DolphinQt/Settings.h"
 
@@ -76,6 +84,14 @@ MappingWindow::MappingWindow(QWidget* parent, Type type, int port_num)
 
   const auto lock = GetController()->GetStateLock();
   emit ConfigChanged();
+
+  auto* filter = new WindowActivationEventFilter(this);
+  installEventFilter(filter);
+
+  filter->connect(filter, &WindowActivationEventFilter::windowDeactivated,
+                  [] { HotkeyManagerEmu::Enable(true); });
+  filter->connect(filter, &WindowActivationEventFilter::windowActivated,
+                  [] { HotkeyManagerEmu::Enable(false); });
 }
 
 void MappingWindow::CreateDevicesLayout()
@@ -83,13 +99,26 @@ void MappingWindow::CreateDevicesLayout()
   m_devices_layout = new QHBoxLayout();
   m_devices_box = new QGroupBox(tr("Device"));
   m_devices_combo = new QComboBox();
-  m_devices_refresh = new QPushButton(tr("Refresh"));
+
+  auto* const options = new QToolButton();
+  // Make it more apparent that this is a menu with more options.
+  options->setPopupMode(QToolButton::ToolButtonPopupMode::MenuButtonPopup);
+
+  const auto refresh_action = new QAction(tr("Refresh"), options);
+  connect(refresh_action, &QAction::triggered, this, &MappingWindow::RefreshDevices);
+
+  m_all_devices_action = new QAction(tr("Create mappings for other devices"), options);
+  m_all_devices_action->setCheckable(true);
+
+  options->addAction(refresh_action);
+  options->addAction(m_all_devices_action);
+  options->setDefaultAction(refresh_action);
 
   m_devices_combo->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
-  m_devices_refresh->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+  options->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
 
   m_devices_layout->addWidget(m_devices_combo);
-  m_devices_layout->addWidget(m_devices_refresh);
+  m_devices_layout->addWidget(options);
 
   m_devices_box->setLayout(m_devices_layout);
 }
@@ -99,9 +128,9 @@ void MappingWindow::CreateProfilesLayout()
   m_profiles_layout = new QHBoxLayout();
   m_profiles_box = new QGroupBox(tr("Profile"));
   m_profiles_combo = new QComboBox();
-  m_profiles_load = new QPushButton(tr("Load"));
-  m_profiles_save = new QPushButton(tr("Save"));
-  m_profiles_delete = new QPushButton(tr("Delete"));
+  m_profiles_load = new NonDefaultQPushButton(tr("Load"));
+  m_profiles_save = new NonDefaultQPushButton(tr("Save"));
+  m_profiles_delete = new NonDefaultQPushButton(tr("Delete"));
 
   auto* button_layout = new QHBoxLayout();
 
@@ -122,8 +151,8 @@ void MappingWindow::CreateResetLayout()
 {
   m_reset_layout = new QHBoxLayout();
   m_reset_box = new QGroupBox(tr("Reset"));
-  m_reset_clear = new QPushButton(tr("Clear"));
-  m_reset_default = new QPushButton(tr("Default"));
+  m_reset_clear = new NonDefaultQPushButton(tr("Clear"));
+  m_reset_default = new NonDefaultQPushButton(tr("Default"));
 
   m_reset_box->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
 
@@ -158,8 +187,6 @@ void MappingWindow::ConnectWidgets()
   connect(this, &MappingWindow::ConfigChanged, this, &MappingWindow::OnGlobalDevicesChanged);
   connect(m_devices_combo, qOverload<int>(&QComboBox::currentIndexChanged), this,
           &MappingWindow::OnSelectDevice);
-
-  connect(m_devices_refresh, &QPushButton::clicked, this, &MappingWindow::RefreshDevices);
 
   connect(m_reset_clear, &QPushButton::clicked, this, &MappingWindow::OnClearFieldsPressed);
   connect(m_reset_default, &QPushButton::clicked, this, &MappingWindow::OnDefaultFieldsPressed);
@@ -229,6 +256,7 @@ void MappingWindow::OnDeleteProfilePressed()
     error.setIcon(QMessageBox::Critical);
     error.setWindowTitle(tr("Error"));
     error.setText(tr("The profile '%1' does not exist").arg(profile_name));
+    SetQWidgetWindowDecorations(&error);
     error.exec();
     return;
   }
@@ -241,6 +269,7 @@ void MappingWindow::OnDeleteProfilePressed()
   confirm.setInformativeText(tr("This cannot be undone!"));
   confirm.setStandardButtons(QMessageBox::Yes | QMessageBox::Cancel);
 
+  SetQWidgetWindowDecorations(&confirm);
   if (confirm.exec() != QMessageBox::Yes)
   {
     return;
@@ -268,13 +297,14 @@ void MappingWindow::OnLoadProfilePressed()
     error.setIcon(QMessageBox::Critical);
     error.setWindowTitle(tr("Error"));
     error.setText(tr("The profile '%1' does not exist").arg(m_profiles_combo->currentText()));
+    SetQWidgetWindowDecorations(&error);
     error.exec();
     return;
   }
 
   const QString profile_path = m_profiles_combo->currentData().toString();
 
-  IniFile ini;
+  Common::IniFile ini;
   ini.Load(profile_path.toStdString());
 
   m_controller->LoadConfig(ini.GetOrCreateSection("Profile"));
@@ -297,7 +327,7 @@ void MappingWindow::OnSaveProfilePressed()
 
   File::CreateFullPath(profile_path);
 
-  IniFile ini;
+  Common::IniFile ini;
 
   m_controller->SaveConfig(ini.GetOrCreateSection("Profile"));
   ini.Save(profile_path);
@@ -311,9 +341,6 @@ void MappingWindow::OnSaveProfilePressed()
 
 void MappingWindow::OnSelectDevice(int)
 {
-  if (IsMappingAllDevices())
-    return;
-
   // Original string is stored in the "user-data".
   const auto device = m_devices_combo->currentData().toString().toStdString();
 
@@ -323,12 +350,12 @@ void MappingWindow::OnSelectDevice(int)
 
 bool MappingWindow::IsMappingAllDevices() const
 {
-  return m_devices_combo->currentIndex() == m_devices_combo->count() - 1;
+  return m_all_devices_action->isChecked();
 }
 
 void MappingWindow::RefreshDevices()
 {
-  Core::RunAsCPUThread([&] { g_controller_interface.RefreshDevices(); });
+  g_controller_interface.RefreshDevices();
 }
 
 void MappingWindow::OnGlobalDevicesChanged()
@@ -342,8 +369,6 @@ void MappingWindow::OnGlobalDevicesChanged()
     const auto qname = QString::fromStdString(name);
     m_devices_combo->addItem(qname, qname);
   }
-
-  m_devices_combo->insertSeparator(m_devices_combo->count());
 
   const auto default_device = m_controller->GetDefaultDevice().ToString();
 
@@ -359,14 +384,13 @@ void MappingWindow::OnGlobalDevicesChanged()
     else
     {
       // Selected device is not currently attached.
+      m_devices_combo->insertSeparator(m_devices_combo->count());
       const auto qname = QString::fromStdString(default_device);
       m_devices_combo->addItem(QLatin1Char{'['} + tr("disconnected") + QStringLiteral("] ") + qname,
                                qname);
       m_devices_combo->setCurrentIndex(m_devices_combo->count() - 1);
     }
   }
-
-  m_devices_combo->addItem(tr("All devices"));
 }
 
 void MappingWindow::SetMappingType(MappingWindow::Type type)
@@ -375,10 +399,15 @@ void MappingWindow::SetMappingType(MappingWindow::Type type)
 
   switch (type)
   {
+  case Type::MAPPING_GC_GBA:
+    widget = new GBAPadEmu(this);
+    setWindowTitle(tr("Game Boy Advance at Port %1").arg(GetPort() + 1));
+    AddWidget(tr("Game Boy Advance"), widget);
+    break;
   case Type::MAPPING_GC_KEYBOARD:
     widget = new GCKeyboardEmu(this);
-    AddWidget(tr("GameCube Keyboard"), widget);
     setWindowTitle(tr("GameCube Keyboard at Port %1").arg(GetPort() + 1));
+    AddWidget(tr("GameCube Keyboard"), widget);
     break;
   case Type::MAPPING_GC_BONGOS:
   case Type::MAPPING_GC_STEERINGWHEEL:
@@ -426,10 +455,12 @@ void MappingWindow::SetMappingType(MappingWindow::Type type)
     AddWidget(tr("Wii and Wii Remote"), new HotkeyWii(this));
     AddWidget(tr("Controller Profile"), new HotkeyControllerProfile(this));
     AddWidget(tr("Graphics"), new HotkeyGraphics(this));
+    AddWidget(tr("USB Emulation"), new HotkeyUSBEmu(this));
     // i18n: Stereoscopic 3D
     AddWidget(tr("3D"), new Hotkey3D(this));
     AddWidget(tr("Save and Load State"), new HotkeyStates(this));
     AddWidget(tr("Other State Management"), new HotkeyStatesOther(this));
+    AddWidget(tr("Game Boy Advance"), new HotkeyGBA(this));
     setWindowTitle(tr("Hotkey Settings"));
     break;
   }
@@ -517,7 +548,7 @@ void MappingWindow::OnDefaultFieldsPressed()
 void MappingWindow::OnClearFieldsPressed()
 {
   // Loading an empty inifile section clears everything.
-  IniFile::Section sec;
+  Common::IniFile::Section sec;
 
   // Keep the currently selected device.
   const auto default_device = m_controller->GetDefaultDevice();

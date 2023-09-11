@@ -1,6 +1,5 @@
 // Copyright 2017 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "DolphinQt/Config/Mapping/MappingButton.h"
 
@@ -13,6 +12,7 @@
 #include "DolphinQt/Config/Mapping/MappingCommon.h"
 #include "DolphinQt/Config/Mapping/MappingWidget.h"
 #include "DolphinQt/Config/Mapping/MappingWindow.h"
+#include "DolphinQt/QtUtils/SetWindowDecorations.h"
 
 #include "InputCommon/ControlReference/ControlReference.h"
 #include "InputCommon/ControllerEmu/ControlGroup/Buttons.h"
@@ -51,12 +51,15 @@ static QString RefToDisplayString(ControlReference* ref)
         controls[i] = qualifier.has_device ? QStringLiteral(":") : QString();
         controls[i].append(QString::fromStdString(qualifier.control_name));
       }
+      else
+      {
+        controls[i].remove(QLatin1Char{' '});
+      }
     }
   }
   // Do not re-add "`" to the final string, we don't need to see it.
   expression = controls.join(QStringLiteral(""));
 
-  expression.remove(QLatin1Char{' '});
   expression.remove(QLatin1Char{'\t'});
   expression.remove(QLatin1Char{'\n'});
   expression.remove(QLatin1Char{'\r'});
@@ -73,14 +76,6 @@ bool MappingButton::IsInput() const
 MappingButton::MappingButton(MappingWidget* parent, ControlReference* ref, bool indicator)
     : ElidedButton(RefToDisplayString(ref)), m_parent(parent), m_reference(ref)
 {
-  // Force all mapping buttons to stay at a minimal height.
-  setFixedHeight(minimumSizeHint().height());
-
-  // Make sure that long entries don't throw our layout out of whack.
-  setFixedWidth(WIDGET_MAX_WIDTH);
-
-  setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
-
   if (IsInput())
   {
     setToolTip(
@@ -103,6 +98,7 @@ void MappingButton::AdvancedPressed()
 {
   IOWindow io(m_parent, m_parent->GetController(), m_reference,
               m_reference->IsInput() ? IOWindow::Type::Input : IOWindow::Type::Output);
+  SetQWidgetWindowDecorations(&io);
   io.exec();
 
   ConfigChanged();

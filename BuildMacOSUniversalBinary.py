@@ -64,12 +64,22 @@ DEFAULT_CONFIG = {
 
     # Minimum macOS version for each architecture slice
     "arm64_mac_os_deployment_target":  "11.0.0",
-    "x86_64_mac_os_deployment_target": "10.12.0",
+    "x86_64_mac_os_deployment_target": "10.15.0",
 
     # CMake Generator to use for building
     "generator": "Unix Makefiles",
     "build_type": "Release",
 
+    "run_unit_tests": False,
+
+    # Whether we should make a build for Steam.
+    "steam": False,
+
+    # Whether our autoupdate functionality is enabled or not.
+    "autoupdate": True,
+
+    # The distributor for this build.
+    "distributor": "None"
 }
 
 # Architectures to build for. This is explicity left out of the command line
@@ -113,6 +123,26 @@ def parse_args(conf=DEFAULT_CONFIG):
         "--entitlements",
         help="Path to .entitlements file for code signing",
         default=conf["entitlements"])
+
+    parser.add_argument("--run_unit_tests", action="store_true",
+                        default=conf["run_unit_tests"])
+
+    parser.add_argument(
+        "--steam",
+        help="Create a build for Steam",
+        action="store_true",
+        default=conf["steam"])
+
+    parser.add_argument(
+        "--autoupdate",
+        help="Enables our autoupdate functionality",
+        action=argparse.BooleanOptionalAction,
+        default=conf["autoupdate"])
+
+    parser.add_argument(
+        "--distributor",
+        help="Sets the distributor for this build",
+        default=conf["distributor"])
 
     parser.add_argument(
         "--codesign",
@@ -241,6 +271,8 @@ def recursive_merge_binaries(src0, src1, dst):
             relative_path = os.path.relpath(os.path.realpath(newpath1), src1)
             os.symlink(relative_path, new_dst_path)
 
+def python_to_cmake_bool(boolean):
+    return "ON" if boolean else "OFF"
 
 def build(config):
     """
@@ -255,10 +287,12 @@ def build(config):
         if not os.path.exists(arch):
             os.mkdir(arch)
 
+        # Place Qt on the prefix path.
+        prefix_path = config[arch+"_qt5_path"]+';'+config[arch+"_cmake_prefix"]
+
         env = os.environ.copy()
-        env["Qt5_DIR"] = config[arch+"_qt5_path"]
         env["CMAKE_OSX_ARCHITECTURES"] = arch
-        env["CMAKE_PREFIX_PATH"] = config[arch+"_cmake_prefix"]
+        env["CMAKE_PREFIX_PATH"] = prefix_path
 
         # Add the other architecture's prefix path to the ignore path so that
         # CMake doesn't try to pick up the wrong architecture's libraries when
@@ -276,7 +310,7 @@ def build(config):
                 # System name needs to be specified for CMake to use
                 # the specified CMAKE_SYSTEM_PROCESSOR
                 "-DCMAKE_SYSTEM_NAME=Darwin",
-                "-DCMAKE_PREFIX_PATH="+config[arch+"_cmake_prefix"],
+                "-DCMAKE_PREFIX_PATH="+prefix_path,
                 "-DCMAKE_SYSTEM_PROCESSOR="+arch,
                 "-DCMAKE_IGNORE_PATH="+ignore_path,
                 "-DCMAKE_OSX_DEPLOYMENT_TARGET="
@@ -285,7 +319,12 @@ def build(config):
                 + config["codesign_identity"],
                 "-DMACOS_CODE_SIGNING_IDENTITY_UPDATER="
                 + config["codesign_identity"],
-                '-DMACOS_CODE_SIGNING="ON"'
+                '-DMACOS_CODE_SIGNING="ON"',
+                "-DSTEAM="
+                + python_to_cmake_bool(config["steam"]),
+                "-DENABLE_AUTOUPDATE="
+                + python_to_cmake_bool(config["autoupdate"]),
+                '-DDISTRIBUTOR=' + config['distributor']
             ],
             env=env, cwd=arch)
 
@@ -323,8 +362,40 @@ def build(config):
             "--verbose=2",
             path])
 
+    print("Built Universal Binary successfully!")
+
+    # Build and run unit tests for each architecture
+    unit_test_results = {}
+    if config["run_unit_tests"]:
+        for arch in ARCHITECTURES:
+            if not os.path.exists(arch):
+                os.mkdir(arch)
+
+            print(f"Building and running unit tests for: {arch}")
+            unit_test_results[arch] = \
+                subprocess.call(["cmake", "--build", ".",
+                                 "--config", config["build_type"],
+                                 "--target", "unittests",
+                                 "--parallel", f"{threads}"], cwd=arch)
+
+        passed_unit_tests = True
+        for a in unit_test_results:
+            code = unit_test_results[a]
+            passed = code == 0
+
+            status_string = "PASSED"
+            if not passed:
+                passed_unit_tests = False
+                status_string = f"FAILED ({code})"
+
+            print(a + " Unit Tests: " + status_string)
+
+        if not passed_unit_tests:
+            exit(-1)
+
+        print("Passed all unit tests")
+
 
 if __name__ == "__main__":
     conf = parse_args()
     build(conf)
-    print("Built Universal Binary successfully!")

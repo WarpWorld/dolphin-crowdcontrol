@@ -1,4 +1,4 @@
-// This file is public domain, in case it's useful to anyone. -comex
+// SPDX-License-Identifier: CC0-1.0
 
 #pragma once
 
@@ -11,9 +11,12 @@
 #include <enet/enet.h>
 
 #include "Common/CommonTypes.h"
+#include "Common/ENet.h"
 #include "Common/Thread.h"
 #include "Common/TraversalProto.h"
 
+namespace Common
+{
 class TraversalClientClient
 {
 public:
@@ -44,6 +47,7 @@ public:
   ~TraversalClient();
 
   TraversalHostId GetHostID() const;
+  TraversalInetAddress GetExternalAddress() const;
   State GetState() const;
   FailureReason GetFailureReason() const;
 
@@ -77,6 +81,7 @@ private:
 
   ENetHost* m_NetHost;
   TraversalHostId m_HostId{};
+  TraversalInetAddress m_external_address{};
   State m_State{};
   FailureReason m_FailureReason{};
   TraversalRequestId m_ConnectRequestId = 0;
@@ -87,9 +92,12 @@ private:
   u16 m_port;
   u32 m_PingTime = 0;
 };
+
 extern std::unique_ptr<TraversalClient> g_TraversalClient;
 // the NetHost connected to the TraversalClient.
-extern std::unique_ptr<ENetHost> g_MainNetHost;
+extern ENet::ENetHostPtr g_MainNetHost;
+
 // Create g_TraversalClient and g_MainNetHost if necessary.
 bool EnsureTraversalClient(const std::string& server, u16 server_port, u16 listen_port = 0);
 void ReleaseTraversalClient();
+}  // namespace Common

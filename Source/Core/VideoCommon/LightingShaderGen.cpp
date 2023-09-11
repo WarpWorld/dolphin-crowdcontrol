@@ -1,6 +1,5 @@
 // Copyright 2016 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "VideoCommon/LightingShaderGen.h"
 
@@ -28,11 +27,11 @@ static void GenerateLightShader(ShaderCode& object, const LightingUidData& uid_d
   case AttenuationFunc::Dir:
     object.Write("ldir = normalize(" LIGHT_POS ".xyz - pos.xyz);\n", LIGHT_POS_PARAMS(index));
     object.Write("attn = 1.0;\n");
-    object.Write("if (length(ldir) == 0.0)\n\t ldir = _norm0;\n");
+    object.Write("if (length(ldir) == 0.0)\n\t ldir = _normal;\n");
     break;
   case AttenuationFunc::Spec:
     object.Write("ldir = normalize(" LIGHT_POS ".xyz - pos.xyz);\n", LIGHT_POS_PARAMS(index));
-    object.Write("attn = (dot(_norm0, ldir) >= 0.0) ? max(0.0, dot(_norm0, " LIGHT_DIR
+    object.Write("attn = (dot(_normal, ldir) >= 0.0) ? max(0.0, dot(_normal, " LIGHT_DIR
                  ".xyz)) : 0.0;\n",
                  LIGHT_DIR_PARAMS(index));
     object.Write("cosAttn = " LIGHT_COSATT ".xyz;\n", LIGHT_COSATT_PARAMS(index));
@@ -65,12 +64,13 @@ static void GenerateLightShader(ShaderCode& object, const LightingUidData& uid_d
     break;
   case DiffuseFunc::Sign:
   case DiffuseFunc::Clamp:
-    object.Write("lacc.{} += int{}(round(attn * {}dot(ldir, _norm0)) * float{}(" LIGHT_COL ")));\n",
+    object.Write("lacc.{} += int{}(round(attn * {}dot(ldir, _normal)) * float{}(" LIGHT_COL
+                 ")));\n",
                  swizzle, swizzle_components, diffusefunc != DiffuseFunc::Sign ? "max(0.0," : "(",
                  swizzle_components, LIGHT_COL_PARAMS(index, swizzle));
     break;
   default:
-    ASSERT(0);
+    ASSERT(false);
   }
 
   object.Write("\n");

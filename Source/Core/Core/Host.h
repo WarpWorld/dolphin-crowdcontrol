@@ -1,11 +1,13 @@
 // Copyright 2008 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #pragma once
 
+#include <memory>
 #include <string>
 #include <vector>
+
+#include "Common/CommonTypes.h"
 
 // Host - defines an interface for the emulator core to communicate back to the
 // OS-specific layer
@@ -23,6 +25,19 @@
 //
 // The host can be just a command line app that opens a window, or a full blown debugger
 // interface.
+
+namespace HW::GBA
+{
+class Core;
+}  // namespace HW::GBA
+
+class GBAHostInterface
+{
+public:
+  virtual ~GBAHostInterface() = default;
+  virtual void GameChanged() = 0;
+  virtual void FrameEnded(const std::vector<u32>& video_buffer) = 0;
+};
 
 enum class HostMessageID
 {
@@ -48,3 +63,15 @@ void Host_UpdateMainFrame();
 void Host_UpdateTitle(const std::string& title);
 void Host_YieldToUI();
 void Host_TitleChanged();
+
+void Host_UpdateDiscordClientID(const std::string& client_id = {});
+bool Host_UpdateDiscordPresenceRaw(const std::string& details = {}, const std::string& state = {},
+                                   const std::string& large_image_key = {},
+                                   const std::string& large_image_text = {},
+                                   const std::string& small_image_key = {},
+                                   const std::string& small_image_text = {},
+                                   const int64_t start_timestamp = 0,
+                                   const int64_t end_timestamp = 0, const int party_size = 0,
+                                   const int party_max = 0);
+
+std::unique_ptr<GBAHostInterface> Host_CreateGBAHost(std::weak_ptr<HW::GBA::Core> core);

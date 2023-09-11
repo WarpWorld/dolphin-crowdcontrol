@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 package org.dolphinemu.dolphinemu.model;
 
 import androidx.annotation.Keep;
@@ -17,12 +19,12 @@ public class GameFileCache
   @Keep
   private long mPointer;
 
-  public GameFileCache(String path)
+  public GameFileCache()
   {
-    mPointer = newGameFileCache(path);
+    mPointer = newGameFileCache();
   }
 
-  private static native long newGameFileCache(String path);
+  private static native long newGameFileCache();
 
   @Override
   public native void finalize();
@@ -59,7 +61,7 @@ public class GameFileCache
       String path = dolphinIni.getString(Settings.SECTION_INI_GENERAL,
               SettingsFile.KEY_ISO_PATH_BASE + i, "");
 
-      if (path.startsWith("content://") ? ContentHandler.exists(path) : new File(path).exists())
+      if (ContentHandler.isContentUri(path) ? ContentHandler.exists(path) : new File(path).exists())
       {
         pathSet.add(path);
       }
@@ -94,33 +96,44 @@ public class GameFileCache
     return pathSet;
   }
 
-  /**
-   * Scans through the file system and updates the cache to match.
-   *
-   * @return true if the cache was modified
-   */
-  public boolean update()
+  public static String[] getAllGamePaths()
   {
-    boolean recursiveScan = BooleanSetting.MAIN_RECURSIVE_ISO_PATHS.getBooleanGlobal();
+    boolean recursiveScan = BooleanSetting.MAIN_RECURSIVE_ISO_PATHS.getBoolean();
 
     LinkedHashSet<String> folderPathsSet = getPathSet(true);
 
     String[] folderPaths = folderPathsSet.toArray(new String[0]);
 
-    return update(folderPaths, recursiveScan);
+    return getAllGamePaths(folderPaths, recursiveScan);
   }
 
-  public native int getSize();
+  public static native String[] getAllGamePaths(String[] folderPaths, boolean recursiveScan);
 
-  public native GameFile[] getAllGames();
+  public synchronized native int getSize();
 
-  public native GameFile addOrGet(String gamePath);
+  public synchronized native GameFile[] getAllGames();
 
-  public native boolean update(String[] folderPaths, boolean recursiveScan);
+  public synchronized native GameFile addOrGet(String gamePath);
 
-  public native boolean updateAdditionalMetadata();
+  /**
+   * Sets the list of games to cache.
+   *
+   * Games which are in the passed-in list but not in the cache are scanned and added to the cache,
+   * and games which are in the cache but not in the passed-in list are removed from the cache.
+   *
+   * @return true if the cache was modified
+   */
+  public synchronized native boolean update(String[] gamePaths);
 
-  public native boolean load();
+  /**
+   * For each game that already is in the cache, scans the folder that contains the game
+   * for additional metadata files (PNG/XML).
+   *
+   * @return true if the cache was modified
+   */
+  public synchronized native boolean updateAdditionalMetadata();
 
-  public native boolean save();
+  public synchronized native boolean load();
+
+  public synchronized native boolean save();
 }

@@ -1,6 +1,5 @@
 // Copyright 2017 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #pragma once
 
@@ -21,7 +20,7 @@ namespace IOS::HLE
 class USB_HIDv4 final : public USBHost
 {
 public:
-  USB_HIDv4(Kernel& ios, const std::string& device_name);
+  USB_HIDv4(EmulationKernel& ios, const std::string& device_name);
   ~USB_HIDv4() override;
 
   std::optional<IPCReply> IOCtl(const IOCtlRequest& request) override;

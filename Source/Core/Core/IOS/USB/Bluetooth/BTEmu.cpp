@@ -1,6 +1,5 @@
 // Copyright 2008 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "Core/IOS/USB/Bluetooth/BTEmu.h"
 
@@ -20,9 +19,13 @@
 #include "Core/HW/Memmap.h"
 #include "Core/HW/SystemTimers.h"
 #include "Core/HW/Wiimote.h"
+#include "Core/HW/WiimoteEmu/DesiredWiimoteState.h"
 #include "Core/IOS/Device.h"
 #include "Core/IOS/IOS.h"
+#include "Core/NetPlayClient.h"
+#include "Core/NetPlayProto.h"
 #include "Core/SysConf.h"
+#include "Core/System.h"
 #include "InputCommon/ControllerInterface/ControllerInterface.h"
 
 namespace IOS::HLE
@@ -33,7 +36,7 @@ SQueuedEvent::SQueuedEvent(u32 size_, u16 handle) : size(size_), connection_hand
     PanicAlertFmt("SQueuedEvent: The size is too large.");
 }
 
-BluetoothEmuDevice::BluetoothEmuDevice(Kernel& ios, const std::string& device_name)
+BluetoothEmuDevice::BluetoothEmuDevice(EmulationKernel& ios, const std::string& device_name)
     : BluetoothBaseDevice(ios, device_name)
 {
   SysConf sysconf{ios.GetFS()};
@@ -59,7 +62,9 @@ BluetoothEmuDevice::BluetoothEmuDevice(Kernel& ios, const std::string& device_na
     DEBUG_LOG_FMT(IOS_WIIMOTE, "Wii Remote {} BT ID {:x},{:x},{:x},{:x},{:x},{:x}", i, tmp_bd[0],
                   tmp_bd[1], tmp_bd[2], tmp_bd[3], tmp_bd[4], tmp_bd[5]);
 
-    m_wiimotes.emplace_back(std::make_unique<WiimoteDevice>(this, i, tmp_bd));
+    const unsigned int hid_source_number =
+        NetPlay::IsNetPlayRunning() ? NetPlay::NetPlay_GetLocalWiimoteForSlot(i) : i;
+    m_wiimotes[i] = std::make_unique<WiimoteDevice>(this, tmp_bd, hid_source_number);
   }
 
   bt_dinf.num_registered = MAX_BBMOTES;
@@ -76,13 +81,13 @@ BluetoothEmuDevice::BluetoothEmuDevice(Kernel& ios, const std::string& device_na
 BluetoothEmuDevice::~BluetoothEmuDevice() = default;
 
 template <typename T>
-static void DoStateForMessage(Kernel& ios, PointerWrap& p, std::unique_ptr<T>& message)
+static void DoStateForMessage(EmulationKernel& ios, PointerWrap& p, std::unique_ptr<T>& message)
 {
   u32 request_address = (message != nullptr) ? message->ios_request.address : 0;
   p.Do(request_address);
   if (request_address != 0)
   {
-    IOCtlVRequest request{request_address};
+    IOCtlVRequest request{ios.GetSystem(), request_address};
     message = std::make_unique<T>(ios, request);
   }
 }
@@ -91,17 +96,17 @@ void BluetoothEmuDevice::DoState(PointerWrap& p)
 {
   bool passthrough_bluetooth = false;
   p.Do(passthrough_bluetooth);
-  if (passthrough_bluetooth && p.GetMode() == PointerWrap::MODE_READ)
+  if (passthrough_bluetooth && p.IsReadMode())
   {
     Core::DisplayMessage("State needs Bluetooth passthrough to be enabled. Aborting load.", 4000);
-    p.SetMode(PointerWrap::MODE_VERIFY);
+    p.SetVerifyMode();
     return;
   }
 
-  p.Do(m_is_active);
+  Device::DoState(p);
   p.Do(m_controller_bd);
-  DoStateForMessage(m_ios, p, m_hci_endpoint);
-  DoStateForMessage(m_ios, p, m_acl_endpoint);
+  DoStateForMessage(GetEmulationKernel(), p, m_hci_endpoint);
+  DoStateForMessage(GetEmulationKernel(), p, m_acl_endpoint);
   p.Do(m_last_ticks);
   p.DoArray(m_packet_count);
   p.Do(m_scan_enable);
@@ -147,61 +152,64 @@ std::optional<IPCReply> BluetoothEmuDevice::IOCtlV(const IOCtlVRequest& request)
   case USB::IOCTLV_USBV0_CTRLMSG:  // HCI command is received from the stack
   {
     // Replies are generated inside
-    ExecuteHCICommandMessage(USB::V0CtrlMessage(m_ios, request));
+    ExecuteHCICommandMessage(USB::V0CtrlMessage(GetEmulationKernel(), request));
     send_reply = false;
     break;
   }
 
   case USB::IOCTLV_USBV0_BLKMSG:
   {
-    const USB::V0BulkMessage ctrl{m_ios, request};
+    const USB::V0BulkMessage ctrl{GetEmulationKernel(), request};
     switch (ctrl.endpoint)
     {
     case ACL_DATA_OUT:  // ACL data is received from the stack
     {
+      auto& system = GetSystem();
+      auto& memory = system.GetMemory();
+
       // This is the ACL datapath from CPU to Wii Remote
       const auto* acl_header =
-          reinterpret_cast<hci_acldata_hdr_t*>(Memory::GetPointer(ctrl.data_address));
+          reinterpret_cast<hci_acldata_hdr_t*>(memory.GetPointer(ctrl.data_address));
 
       DEBUG_ASSERT(HCI_BC_FLAG(acl_header->con_handle) == HCI_POINT2POINT);
       DEBUG_ASSERT(HCI_PB_FLAG(acl_header->con_handle) == HCI_PACKET_START);
 
       SendToDevice(HCI_CON_HANDLE(acl_header->con_handle),
-                   Memory::GetPointer(ctrl.data_address + sizeof(hci_acldata_hdr_t)),
+                   memory.GetPointer(ctrl.data_address + sizeof(hci_acldata_hdr_t)),
                    acl_header->length);
       break;
     }
     case ACL_DATA_IN:  // We are given an ACL buffer to fill
     {
-      m_acl_endpoint = std::make_unique<USB::V0BulkMessage>(m_ios, request);
+      m_acl_endpoint = std::make_unique<USB::V0BulkMessage>(GetEmulationKernel(), request);
       DEBUG_LOG_FMT(IOS_WIIMOTE, "ACL_DATA_IN: {:#010x}", request.address);
       send_reply = false;
       break;
     }
     default:
-      DEBUG_ASSERT_MSG(IOS_WIIMOTE, 0, "Unknown USB::IOCTLV_USBV0_BLKMSG: %x", ctrl.endpoint);
+      DEBUG_ASSERT_MSG(IOS_WIIMOTE, 0, "Unknown USB::IOCTLV_USBV0_BLKMSG: {:#x}", ctrl.endpoint);
     }
     break;
   }
 
   case USB::IOCTLV_USBV0_INTRMSG:
   {
-    const USB::V0IntrMessage ctrl{m_ios, request};
+    const USB::V0IntrMessage ctrl{GetEmulationKernel(), request};
     if (ctrl.endpoint == HCI_EVENT)  // We are given a HCI buffer to fill
     {
-      m_hci_endpoint = std::make_unique<USB::V0IntrMessage>(m_ios, request);
+      m_hci_endpoint = std::make_unique<USB::V0IntrMessage>(GetEmulationKernel(), request);
       DEBUG_LOG_FMT(IOS_WIIMOTE, "HCI_EVENT: {:#010x}", request.address);
       send_reply = false;
     }
     else
     {
-      DEBUG_ASSERT_MSG(IOS_WIIMOTE, 0, "Unknown USB::IOCTLV_USBV0_INTRMSG: %x", ctrl.endpoint);
+      DEBUG_ASSERT_MSG(IOS_WIIMOTE, 0, "Unknown USB::IOCTLV_USBV0_INTRMSG: {:#x}", ctrl.endpoint);
     }
     break;
   }
 
   default:
-    request.DumpUnknown(GetDeviceName(), Common::Log::IOS_WIIMOTE);
+    request.DumpUnknown(GetSystem(), GetDeviceName(), Common::Log::LogType::IOS_WIIMOTE);
   }
 
   if (!send_reply)
@@ -239,15 +247,19 @@ void BluetoothEmuDevice::SendACLPacket(const bdaddr_t& source, const u8* data, u
     DEBUG_LOG_FMT(IOS_WIIMOTE, "ACL endpoint valid, sending packet to {:08x}",
                   m_acl_endpoint->ios_request.address);
 
+    auto& system = GetSystem();
+    auto& memory = system.GetMemory();
+
     hci_acldata_hdr_t* header =
-        reinterpret_cast<hci_acldata_hdr_t*>(Memory::GetPointer(m_acl_endpoint->data_address));
+        reinterpret_cast<hci_acldata_hdr_t*>(memory.GetPointer(m_acl_endpoint->data_address));
     header->con_handle = HCI_MK_CON_HANDLE(connection_handle, HCI_PACKET_START, HCI_POINT2POINT);
     header->length = size;
 
     // Write the packet to the buffer
     memcpy(reinterpret_cast<u8*>(header) + sizeof(hci_acldata_hdr_t), data, header->length);
 
-    m_ios.EnqueueIPCReply(m_acl_endpoint->ios_request, sizeof(hci_acldata_hdr_t) + size);
+    GetEmulationKernel().EnqueueIPCReply(m_acl_endpoint->ios_request,
+                                         sizeof(hci_acldata_hdr_t) + size);
     m_acl_endpoint.reset();
   }
   else
@@ -276,7 +288,7 @@ void BluetoothEmuDevice::AddEventToQueue(const SQueuedEvent& event)
       m_hci_endpoint->FillBuffer(event.buffer, event.size);
 
       // Send a reply to indicate HCI buffer is filled
-      m_ios.EnqueueIPCReply(m_hci_endpoint->ios_request, event.size);
+      GetEmulationKernel().EnqueueIPCReply(m_hci_endpoint->ios_request, event.size);
       m_hci_endpoint.reset();
     }
     else  // push new one, pop oldest
@@ -293,7 +305,7 @@ void BluetoothEmuDevice::AddEventToQueue(const SQueuedEvent& event)
       m_hci_endpoint->FillBuffer(queued_event.buffer, queued_event.size);
 
       // Send a reply to indicate HCI buffer is filled
-      m_ios.EnqueueIPCReply(m_hci_endpoint->ios_request, queued_event.size);
+      GetEmulationKernel().EnqueueIPCReply(m_hci_endpoint->ios_request, queued_event.size);
       m_hci_endpoint.reset();
       m_event_queue.pop_front();
     }
@@ -319,7 +331,7 @@ void BluetoothEmuDevice::Update()
     m_hci_endpoint->FillBuffer(event.buffer, event.size);
 
     // Send a reply to indicate HCI buffer is filled
-    m_ios.EnqueueIPCReply(m_hci_endpoint->ios_request, event.size);
+    GetEmulationKernel().EnqueueIPCReply(m_hci_endpoint->ios_request, event.size);
     m_hci_endpoint.reset();
     m_event_queue.pop_front();
   }
@@ -335,14 +347,51 @@ void BluetoothEmuDevice::Update()
     wiimote->Update();
 
   const u64 interval = SystemTimers::GetTicksPerSecond() / Wiimote::UPDATE_FREQ;
-  const u64 now = CoreTiming::GetTicks();
+  const u64 now = GetSystem().GetCoreTiming().GetTicks();
 
   if (now - m_last_ticks > interval)
   {
     g_controller_interface.SetCurrentInputChannel(ciface::InputChannel::Bluetooth);
     g_controller_interface.UpdateInput();
-    for (auto& wiimote : m_wiimotes)
-      wiimote->UpdateInput();
+
+    std::array<WiimoteEmu::DesiredWiimoteState, MAX_BBMOTES> wiimote_states;
+    std::array<WiimoteDevice::NextUpdateInputCall, MAX_BBMOTES> next_call;
+
+    for (size_t i = 0; i < m_wiimotes.size(); ++i)
+      next_call[i] = m_wiimotes[i]->PrepareInput(&wiimote_states[i]);
+
+    if (NetPlay::IsNetPlayRunning())
+    {
+      std::array<WiimoteEmu::SerializedWiimoteState, MAX_BBMOTES> serialized;
+      std::array<NetPlay::NetPlayClient::WiimoteDataBatchEntry, MAX_BBMOTES> batch;
+      size_t batch_count = 0;
+      for (size_t i = 0; i < 4; ++i)
+      {
+        if (next_call[i] == WiimoteDevice::NextUpdateInputCall::None)
+          continue;
+        serialized[i] = WiimoteEmu::SerializeDesiredState(wiimote_states[i]);
+        batch[batch_count].state = &serialized[i];
+        batch[batch_count].wiimote = static_cast<int>(i);
+        ++batch_count;
+      }
+
+      if (batch_count > 0)
+      {
+        NetPlay::NetPlay_GetWiimoteData(
+            std::span<NetPlay::NetPlayClient::WiimoteDataBatchEntry>(batch.data(), batch_count));
+
+        for (size_t i = 0; i < batch_count; ++i)
+        {
+          const int wiimote = batch[i].wiimote;
+          if (!WiimoteEmu::DeserializeDesiredState(&wiimote_states[wiimote], serialized[wiimote]))
+            PanicAlertFmtT("Received invalid Wii Remote data from Netplay.");
+        }
+      }
+    }
+
+    for (size_t i = 0; i < m_wiimotes.size(); ++i)
+      m_wiimotes[i]->UpdateInput(next_call[i], wiimote_states[i]);
+
     m_last_ticks = now;
   }
 
@@ -379,7 +428,10 @@ void BluetoothEmuDevice::ACLPool::WriteToEndpoint(const USB::V0BulkMessage& endp
   DEBUG_LOG_FMT(IOS_WIIMOTE, "ACL packet being written from queue to {:08x}",
                 endpoint.ios_request.address);
 
-  hci_acldata_hdr_t* header = (hci_acldata_hdr_t*)Memory::GetPointer(endpoint.data_address);
+  auto& system = m_ios.GetSystem();
+  auto& memory = system.GetMemory();
+
+  hci_acldata_hdr_t* header = (hci_acldata_hdr_t*)memory.GetPointer(endpoint.data_address);
   header->con_handle = HCI_MK_CON_HANDLE(conn_handle, HCI_PACKET_START, HCI_POINT2POINT);
   header->length = size;
 
@@ -599,7 +651,8 @@ bool BluetoothEmuDevice::SendEventRemoteNameReq(const bdaddr_t& bd)
   DEBUG_LOG_FMT(IOS_WIIMOTE, "  bd: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
                 remote_name_req->bdaddr[0], remote_name_req->bdaddr[1], remote_name_req->bdaddr[2],
                 remote_name_req->bdaddr[3], remote_name_req->bdaddr[4], remote_name_req->bdaddr[5]);
-  DEBUG_LOG_FMT(IOS_WIIMOTE, "  RemoteName: {}", remote_name_req->RemoteName);
+  DEBUG_LOG_FMT(IOS_WIIMOTE, "  RemoteName: {}",
+                reinterpret_cast<char*>(remote_name_req->RemoteName));
 
   AddEventToQueue(event);
 
@@ -914,10 +967,13 @@ bool BluetoothEmuDevice::SendEventConPacketTypeChange(u16 connection_handle, u16
 // This is called from the USB::IOCTLV_USBV0_CTRLMSG Ioctlv
 void BluetoothEmuDevice::ExecuteHCICommandMessage(const USB::V0CtrlMessage& ctrl_message)
 {
-  const u8* input = Memory::GetPointer(ctrl_message.data_address + 3);
+  auto& system = GetSystem();
+  auto& memory = system.GetMemory();
+
+  const u8* input = memory.GetPointer(ctrl_message.data_address + 3);
 
   SCommandMessage msg;
-  std::memcpy(&msg, Memory::GetPointer(ctrl_message.data_address), sizeof(msg));
+  std::memcpy(&msg, memory.GetPointer(ctrl_message.data_address), sizeof(msg));
 
   const u16 ocf = HCI_OCF(msg.Opcode);
   const u16 ogf = HCI_OGF(msg.Opcode);
@@ -1086,14 +1142,15 @@ void BluetoothEmuDevice::ExecuteHCICommandMessage(const USB::V0CtrlMessage& ctrl
     }
     else
     {
-      DEBUG_ASSERT_MSG(IOS_WIIMOTE, 0, "Unknown USB_IOCTL_CTRLMSG: 0x%04X (ocf: 0x%x  ogf 0x%x)",
-                       msg.Opcode, ocf, ogf);
+      DEBUG_ASSERT_MSG(IOS_WIIMOTE, 0,
+                       "Unknown USB_IOCTL_CTRLMSG: {:#06x} (ocf: {:#04x} ogf {:#04x})", msg.Opcode,
+                       ocf, ogf);
     }
     break;
   }
 
   // HCI command is finished, send a reply to command
-  m_ios.EnqueueIPCReply(ctrl_message.ios_request, ctrl_message.length);
+  GetEmulationKernel().EnqueueIPCReply(ctrl_message.ios_request, ctrl_message.length);
 }
 
 //
@@ -1711,7 +1768,7 @@ void BluetoothEmuDevice::CommandVendorSpecific_FC4F(const u8* input, u32 size)
   INFO_LOG_FMT(IOS_WIIMOTE, "Command: CommandVendorSpecific_FC4F: (callstack WUDiRemovePatch)");
   DEBUG_LOG_FMT(IOS_WIIMOTE, "Input (size {:#x}):", size);
 
-  Dolphin_Debugger::PrintDataBuffer(Common::Log::IOS_WIIMOTE, input, size, "Data: ");
+  Dolphin_Debugger::PrintDataBuffer(Common::Log::LogType::IOS_WIIMOTE, input, size, "Data: ");
 
   SendEventCommandComplete(0xFC4F, &reply, sizeof(hci_status_rp));
 }
@@ -1723,7 +1780,7 @@ void BluetoothEmuDevice::CommandVendorSpecific_FC4C(const u8* input, u32 size)
 
   DEBUG_LOG_FMT(IOS_WIIMOTE, "Command: CommandVendorSpecific_FC4C:");
   DEBUG_LOG_FMT(IOS_WIIMOTE, "Input (size {:#x}):", size);
-  Dolphin_Debugger::PrintDataBuffer(Common::Log::IOS_WIIMOTE, input, size, "Data: ");
+  Dolphin_Debugger::PrintDataBuffer(Common::Log::LogType::IOS_WIIMOTE, input, size, "Data: ");
 
   SendEventCommandComplete(0xFC4C, &reply, sizeof(hci_status_rp));
 }

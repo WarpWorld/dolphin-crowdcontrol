@@ -1,16 +1,17 @@
 // Copyright 2014 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+#include "Core/PowerPC/JitArm64/Jit.h"
 
 #include "Common/Arm64Emitter.h"
 #include "Common/CommonTypes.h"
 
 #include "Core/Core.h"
 #include "Core/CoreTiming.h"
-#include "Core/PowerPC/JitArm64/Jit.h"
 #include "Core/PowerPC/JitArm64/JitArm64_RegCache.h"
 #include "Core/PowerPC/PPCTables.h"
 #include "Core/PowerPC/PowerPC.h"
+#include "Core/System.h"
 
 using namespace Arm64Gen;
 
@@ -19,18 +20,18 @@ void JitArm64::sc(UGeckoInstruction inst)
   INSTRUCTION_START
   JITDISABLE(bJITBranchOff);
 
-  gpr.Flush(FlushMode::All);
-  fpr.Flush(FlushMode::All);
+  gpr.Flush(FlushMode::All, ARM64Reg::INVALID_REG);
+  fpr.Flush(FlushMode::All, ARM64Reg::INVALID_REG);
 
   ARM64Reg WA = gpr.GetReg();
 
   LDR(IndexType::Unsigned, WA, PPC_REG, PPCSTATE_OFF(Exceptions));
-  ORR(WA, WA, 31, 0);  // Same as WA | EXCEPTION_SYSCALL
+  ORR(WA, WA, LogicalImm(EXCEPTION_SYSCALL, 32));
   STR(IndexType::Unsigned, WA, PPC_REG, PPCSTATE_OFF(Exceptions));
 
   gpr.Unlock(WA);
 
-  WriteExceptionExit(js.compilerPC + 4);
+  WriteExceptionExit(js.compilerPC + 4, false, true);
 }
 
 void JitArm64::rfi(UGeckoInstruction inst)
@@ -38,8 +39,8 @@ void JitArm64::rfi(UGeckoInstruction inst)
   INSTRUCTION_START
   JITDISABLE(bJITBranchOff);
 
-  gpr.Flush(FlushMode::All);
-  fpr.Flush(FlushMode::All);
+  gpr.Flush(FlushMode::All, ARM64Reg::INVALID_REG);
+  fpr.Flush(FlushMode::All, ARM64Reg::INVALID_REG);
 
   // See Interpreter rfi for details
   const u32 mask = 0x87C0FFFF;
@@ -63,6 +64,8 @@ void JitArm64::rfi(UGeckoInstruction inst)
   ORR(WA, WA, WC);                        // rB = Masked MSR OR masked SRR1
 
   STR(IndexType::Unsigned, WA, PPC_REG, PPCSTATE_OFF(msr));  // STR rB in to rA
+
+  EmitStoreMembase(WA);
 
   LDR(IndexType::Unsigned, WA, PPC_REG, PPCSTATE_OFF_SPR(SPR_SRR0));
   gpr.Unlock(WB, WC);
@@ -96,8 +99,8 @@ void JitArm64::bx(UGeckoInstruction inst)
     return;
   }
 
-  gpr.Flush(FlushMode::All);
-  fpr.Flush(FlushMode::All);
+  gpr.Flush(FlushMode::All, ARM64Reg::INVALID_REG);
+  fpr.Flush(FlushMode::All, ARM64Reg::INVALID_REG);
 
   if (js.op->branchIsIdleLoop)
   {
@@ -105,7 +108,7 @@ void JitArm64::bx(UGeckoInstruction inst)
     ARM64Reg WA = gpr.GetReg();
     ARM64Reg XA = EncodeRegTo64(WA);
 
-    MOVP2R(XA, &CoreTiming::Idle);
+    MOVP2R(XA, &CoreTiming::GlobalIdle);
     BLR(XA);
     gpr.Unlock(WA);
 
@@ -152,20 +155,17 @@ void JitArm64::bcx(UGeckoInstruction inst)
     MOVI2R(WA, js.compilerPC + 4);
     STR(IndexType::Unsigned, WA, PPC_REG, PPCSTATE_OFF_SPR(SPR_LR));
   }
-  gpr.Unlock(WA);
 
-  gpr.Flush(FlushMode::MaintainState);
-  fpr.Flush(FlushMode::MaintainState);
+  gpr.Flush(FlushMode::MaintainState, WA);
+  fpr.Flush(FlushMode::MaintainState, ARM64Reg::INVALID_REG);
 
   if (js.op->branchIsIdleLoop)
   {
     // make idle loops go faster
-    ARM64Reg WA2 = gpr.GetReg();
-    ARM64Reg XA2 = EncodeRegTo64(WA2);
+    ARM64Reg XA = EncodeRegTo64(WA);
 
-    MOVP2R(XA2, &CoreTiming::Idle);
-    BLR(XA2);
-    gpr.Unlock(WA2);
+    MOVP2R(XA, &CoreTiming::GlobalIdle);
+    BLR(XA);
 
     WriteExceptionExit(js.op->branchTo);
   }
@@ -183,10 +183,12 @@ void JitArm64::bcx(UGeckoInstruction inst)
 
   if (!analyzer.HasOption(PPCAnalyst::PPCAnalyzer::OPTION_CONDITIONAL_CONTINUE))
   {
-    gpr.Flush(FlushMode::All);
-    fpr.Flush(FlushMode::All);
+    gpr.Flush(FlushMode::All, WA);
+    fpr.Flush(FlushMode::All, ARM64Reg::INVALID_REG);
     WriteExit(js.compilerPC + 4);
   }
+
+  gpr.Unlock(WA);
 }
 
 void JitArm64::bcctrx(UGeckoInstruction inst)
@@ -206,8 +208,8 @@ void JitArm64::bcctrx(UGeckoInstruction inst)
   // BO_2 == 1z1zz -> b always
 
   // NPC = CTR & 0xfffffffc;
-  gpr.Flush(FlushMode::All);
-  fpr.Flush(FlushMode::All);
+  gpr.Flush(FlushMode::All, ARM64Reg::INVALID_REG);
+  fpr.Flush(FlushMode::All, ARM64Reg::INVALID_REG);
 
   if (inst.LK_3)
   {
@@ -220,7 +222,7 @@ void JitArm64::bcctrx(UGeckoInstruction inst)
   ARM64Reg WA = gpr.GetReg();
 
   LDR(IndexType::Unsigned, WA, PPC_REG, PPCSTATE_OFF_SPR(SPR_CTR));
-  AND(WA, WA, 30, 29);  // Wipe the bottom 2 bits.
+  AND(WA, WA, LogicalImm(~0x3, 32));
 
   WriteExit(WA, inst.LK_3, js.compilerPC + 4);
 
@@ -236,7 +238,7 @@ void JitArm64::bclrx(UGeckoInstruction inst)
       (inst.BO & BO_DONT_DECREMENT_FLAG) == 0 || (inst.BO & BO_DONT_CHECK_CONDITION) == 0;
 
   ARM64Reg WA = gpr.GetReg();
-  ARM64Reg WB = inst.LK ? gpr.GetReg() : ARM64Reg::INVALID_REG;
+  ARM64Reg WB = conditional || inst.LK ? gpr.GetReg() : ARM64Reg::INVALID_REG;
 
   FixupBranch pCTRDontBranch;
   if ((inst.BO & BO_DONT_DECREMENT_FLAG) == 0)  // Decrement and test CTR
@@ -266,24 +268,23 @@ void JitArm64::bclrx(UGeckoInstruction inst)
   }
 
   LDR(IndexType::Unsigned, WA, PPC_REG, PPCSTATE_OFF_SPR(SPR_LR));
-  AND(WA, WA, 30, 29);  // Wipe the bottom 2 bits.
+  AND(WA, WA, LogicalImm(~0x3, 32));
 
   if (inst.LK)
   {
     MOVI2R(WB, js.compilerPC + 4);
     STR(IndexType::Unsigned, WB, PPC_REG, PPCSTATE_OFF_SPR(SPR_LR));
-    gpr.Unlock(WB);
   }
 
-  gpr.Flush(conditional ? FlushMode::MaintainState : FlushMode::All);
-  fpr.Flush(conditional ? FlushMode::MaintainState : FlushMode::All);
+  gpr.Flush(conditional ? FlushMode::MaintainState : FlushMode::All, WB);
+  fpr.Flush(conditional ? FlushMode::MaintainState : FlushMode::All, ARM64Reg::INVALID_REG);
 
   if (js.op->branchIsIdleLoop)
   {
     // make idle loops go faster
     ARM64Reg XA = EncodeRegTo64(WA);
 
-    MOVP2R(XA, &CoreTiming::Idle);
+    MOVP2R(XA, &CoreTiming::GlobalIdle);
     BLR(XA);
 
     WriteExceptionExit(js.op->branchTo);
@@ -292,8 +293,6 @@ void JitArm64::bclrx(UGeckoInstruction inst)
   {
     WriteBLRExit(WA);
   }
-
-  gpr.Unlock(WA);
 
   if (conditional)
     SwitchToNearCode();
@@ -305,8 +304,12 @@ void JitArm64::bclrx(UGeckoInstruction inst)
 
   if (!analyzer.HasOption(PPCAnalyst::PPCAnalyzer::OPTION_CONDITIONAL_CONTINUE))
   {
-    gpr.Flush(FlushMode::All);
-    fpr.Flush(FlushMode::All);
+    gpr.Flush(FlushMode::All, WA);
+    fpr.Flush(FlushMode::All, ARM64Reg::INVALID_REG);
     WriteExit(js.compilerPC + 4);
   }
+
+  gpr.Unlock(WA);
+  if (WB != ARM64Reg::INVALID_REG)
+    gpr.Unlock(WB);
 }

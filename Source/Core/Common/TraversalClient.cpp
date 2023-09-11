@@ -1,4 +1,4 @@
-// This file is public domain, in case it's useful to anyone. -comex
+// SPDX-License-Identifier: CC0-1.0
 
 #include "Common/TraversalClient.h"
 
@@ -12,6 +12,8 @@
 #include "Common/Random.h"
 #include "Core/NetPlayProto.h"
 
+namespace Common
+{
 TraversalClient::TraversalClient(ENetHost* netHost, const std::string& server, const u16 port)
     : m_NetHost(netHost), m_Server(server), m_port(port)
 {
@@ -27,6 +29,11 @@ TraversalClient::~TraversalClient() = default;
 TraversalHostId TraversalClient::GetHostID() const
 {
   return m_HostId;
+}
+
+TraversalInetAddress TraversalClient::GetExternalAddress() const
+{
+  return m_external_address;
 }
 
 TraversalClient::State TraversalClient::GetState() const
@@ -153,6 +160,7 @@ void TraversalClient::HandleServerPacket(TraversalPacket* packet)
       break;
     }
     m_HostId = packet->helloFromServer.yourHostId;
+    m_external_address = packet->helloFromServer.yourAddress;
     m_State = State::Connected;
     if (m_Client)
       m_Client->OnTraversalStateChanged();
@@ -194,7 +202,7 @@ void TraversalClient::HandleServerPacket(TraversalPacket* packet)
     break;
   }
   default:
-    WARN_LOG_FMT(NETPLAY, "Received unknown packet with type {}", packet->type);
+    WARN_LOG_FMT(NETPLAY, "Received unknown packet with type {}", static_cast<int>(packet->type));
     break;
   }
   if (packet->type != TraversalPacketType::Ack)
@@ -298,7 +306,7 @@ int ENET_CALLBACK TraversalClient::InterceptCallback(ENetHost* host, ENetEvent* 
 }
 
 std::unique_ptr<TraversalClient> g_TraversalClient;
-std::unique_ptr<ENetHost> g_MainNetHost;
+ENet::ENetHostPtr g_MainNetHost;
 
 // The settings at the previous TraversalClient reset - notably, we
 // need to know not just what port it's on, but whether it was
@@ -317,17 +325,18 @@ bool EnsureTraversalClient(const std::string& server, u16 server_port, u16 liste
     g_OldListenPort = listen_port;
 
     ENetAddress addr = {ENET_HOST_ANY, listen_port};
-    ENetHost* host = enet_host_create(&addr,                   // address
-                                      50,                      // peerCount
-                                      NetPlay::CHANNEL_COUNT,  // channelLimit
-                                      0,                       // incomingBandwidth
-                                      0);                      // outgoingBandwidth
+    auto host = Common::ENet::ENetHostPtr{enet_host_create(&addr,                   // address
+                                                           50,                      // peerCount
+                                                           NetPlay::CHANNEL_COUNT,  // channelLimit
+                                                           0,    // incomingBandwidth
+                                                           0)};  // outgoingBandwidth
     if (!host)
     {
       g_MainNetHost.reset();
       return false;
     }
-    g_MainNetHost.reset(host);
+    host->mtu = std::min(host->mtu, NetPlay::MAX_ENET_MTU);
+    g_MainNetHost = std::move(host);
     g_TraversalClient.reset(new TraversalClient(g_MainNetHost.get(), server, server_port));
   }
   return true;
@@ -341,3 +350,4 @@ void ReleaseTraversalClient()
   g_TraversalClient.reset();
   g_MainNetHost.reset();
 }
+}  // namespace Common

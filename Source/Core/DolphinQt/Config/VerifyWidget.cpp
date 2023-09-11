@@ -1,6 +1,5 @@
 // Copyright 2019 Dolphin Emulator Project
-// Licensed under GPLv2+
-// Refer to the license.txt file included.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "DolphinQt/Config/VerifyWidget.h"
 
@@ -21,6 +20,7 @@
 #include "DiscIO/Volume.h"
 #include "DiscIO/VolumeVerifier.h"
 #include "DolphinQt/QtUtils/ParallelProgressDialog.h"
+#include "DolphinQt/QtUtils/SetWindowDecorations.h"
 #include "DolphinQt/Settings.h"
 
 VerifyWidget::VerifyWidget(std::shared_ptr<DiscIO::Volume> volume) : m_volume(std::move(volume))
@@ -75,11 +75,18 @@ void VerifyWidget::CreateWidgets()
   std::tie(m_md5_checkbox, m_md5_line_edit) = AddHashLine(m_hash_layout, tr("MD5:"));
   std::tie(m_sha1_checkbox, m_sha1_line_edit) = AddHashLine(m_hash_layout, tr("SHA-1:"));
 
+  const auto default_to_calculate = DiscIO::VolumeVerifier::GetDefaultHashesToCalculate();
+  m_crc32_checkbox->setChecked(default_to_calculate.crc32);
+  m_md5_checkbox->setChecked(default_to_calculate.md5);
+  m_sha1_checkbox->setChecked(default_to_calculate.sha1);
+
   m_redump_layout = new QFormLayout;
   if (DiscIO::IsDisc(m_volume->GetVolumeType()))
   {
     std::tie(m_redump_checkbox, m_redump_line_edit) =
         AddHashLine(m_redump_layout, tr("Redump.org Status:"));
+    m_redump_checkbox->setChecked(CanVerifyRedump());
+    UpdateRedumpEnabled();
   }
   else
   {
@@ -99,7 +106,6 @@ std::pair<QCheckBox*, QLineEdit*> VerifyWidget::AddHashLine(QFormLayout* layout,
   QLineEdit* line_edit = new QLineEdit(this);
   line_edit->setReadOnly(true);
   QCheckBox* checkbox = new QCheckBox(tr("Calculate"), this);
-  checkbox->setChecked(true);
 
   QHBoxLayout* hbox_layout = new QHBoxLayout;
   hbox_layout->addWidget(line_edit);
@@ -175,6 +181,7 @@ void VerifyWidget::Verify()
 
                    return result;
                  });
+  SetQWidgetWindowDecorations(progress.GetRaw());
   progress.GetRaw()->exec();
 
   std::optional<DiscIO::VolumeVerifier::Result> result = future.get();
